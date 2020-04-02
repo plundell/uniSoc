@@ -1,0 +1,18 @@
+{
+  "name": "unisoc"
+  ,"version": "1.0.0"
+  ,"description": "Lightweight socket wrapper with promisified question/answer protocol that works over websocket, net, dgram and ipc"
+  ,"author": "x7dude"
+  ,"license": "Apache 2.0"
+  ,"main": "unisoc-node.js"
+  ,"scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+  ,"homepage": "https://github.com/x7dude/unisoc"
+  ,"dependencies": {
+    "libbetter": "^1.0.0"
+  }
+  ,"optionalDependencies":{
+    "ws":"^7.2.3"
+  }
+}
