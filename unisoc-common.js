@@ -3,7 +3,7 @@
 'use strict';
 /*
 * @module uniSoc
-* @author x7dude
+* @author plundell
 * @license Apache2
 * @description Unified API for various socket transports with question/answer protocol
 * 

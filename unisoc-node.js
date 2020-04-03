@@ -3,7 +3,7 @@
 
 /*
 * @module uniSoc
-* @author x7dude
+* @author plundell
 * @license Apache2
 * @description Backend component of uniSoc providing server, dgram and ipc
 *	

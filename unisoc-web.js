@@ -3,7 +3,7 @@
 ;'use strict';
 /*
 * @module uniSoc
-* @author x7dude
+* @author plundell
 * @license Apache2
 * @description Frontend component of uniSoc. Wraps around native WebSocket API (https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
 *
