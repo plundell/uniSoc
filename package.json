@@ -1,18 +1,24 @@
 {
   "name": "unisoc"
-  ,"version": "1.0.0"
+  ,"version": "1.0.1"
   ,"description": "Lightweight socket wrapper with promisified question/answer protocol that works over websocket, net, dgram and ipc"
   ,"author": "plundell"
-  ,"license": "Apache 2.0"
-  ,"main": "unisoc-node.js"
+  ,"license": "Apache-2.0"
+  ,"main": "src/node.js"
   ,"scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
+    ,"build":"npx webpack --mode=development ./build-web.js -o dist/unisoc.js && npx webpack --mode=production ./build-web.js -o dist/unisoc.min.js"
   }
   ,"homepage": "https://github.com/plundell/unisoc"
-  ,"dependencies": {
-    "libbetter": "^1.0.0"
+   ,"repository": {
+    "type": "git"
+    ,"url": "git+https://github.com/plundell/unisoc.git"
   }
-  ,"optionalDependencies":{
-    "ws":"^7.2.3"
+  ,"dependencies": {
+    "libbetter": "^1.0.x"
+  }
+  ,"devDependencies": {
+    "webpack": "^4.42.1",
+    "webpack-cli": "^3.3.11"
   }
 }

@@ -26,6 +26,24 @@
 */
 module.exports=function export_uniSoc_node(dep={}){
 
+	function missingDependency(which){throw new Error("Missing dependency for uniSoc: "+which);}
+
+	/*
+	* @const object cX 		BetterUtil common utilities
+	*/
+	var cX= dep.cX || dep.util || dep.BetterUtil  || missingDependency('BetterUtil');
+	cX=cX.cX || cX 
+	dep.BetterUtil=cX;
+
+
+	/*
+	* @const constructor uniSoc 	A common parent for both nodejs and browser flavor
+	*/
+	const uniSoc = dep.uniSoc || dep.common || require('./common.js')(dep);
+	
+
+
+
 	/*
 	* @const object fs 		Native filesystem class, used to check if the socket file already exists (eg. on account 
 	*						of a failed exit), and remove it so a new socket can be setup
@@ -50,15 +68,6 @@ module.exports=function export_uniSoc_node(dep={}){
 	*/
 	const cp = dep.cp || require('child_process');
 
-	/*
-	* @const constructor uniSoc 	A common parent for both nodejs and browser flavor
-	*/
-	const uniSoc = dep.uniSoc || dep.common || require('./uniSoc4.common.js')(dep);
-	
-	/*
-	* @const object cX 		BetterUtil common utilities
-	*/
-	const cX= dep.cX || dep.util.cX ; //if this isn't the case, common ^ will already have thrown error
 
 
 
