@@ -29,11 +29,12 @@ a) Include the bundled version directly in the browser as you would any script, 
 </script>
 ```
 
-b) Require the package into another script, initialize it with it's dependencies, then bundle that.
+b) Require the package into another script, initialize it with it's dependencies, then bundle that...
  ```javascript
  var libbetter=require('./path/to/libbetter/export-browser.js');
  var unisoc=new (require('xxx-framework')(libbetter));
  ```
+ ...and load that in the browser
  ```html
-<script src="path/to/xxx/dist/xxx.js" type="text/javascript">
+<script src="path/to/index.js" type="text/javascript">
 ```
