@@ -1507,7 +1507,7 @@ module.exports=function export_uniSoc_node(dep={}){
 						//everything as been logged, and if callback existed they've been passed there as well along with 
 						//the failing client... so here we just reject with an array of clients that will need extra handling
 
-						//STOPSTOP 2020-03-02: this should return ^^
+						//TODO 2020-03-02: this should return ^^
 					}
 				)
 

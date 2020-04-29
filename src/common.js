@@ -322,7 +322,7 @@ module.exports=function export_uniSoc_common(dep={}){
 			var argNames=options.argNames || func._argNames
 			if(!argNames){
 				try{
-					argNames=bu.getArgNames.call(this,func,true); //true==show default values
+					argNames=bu.getArgNames.call(this,func,true); //true==show default values (but they will be removed vv)
 				}catch(err){
 					log.warn(`Endpoint '${subject}' will not support named args.`,err);
 					
@@ -335,15 +335,19 @@ module.exports=function export_uniSoc_common(dep={}){
 			//Initiate object that will be stored on this.endpoints and start populating it
 			var ep={};
 			if(Array.isArray(argNames)){
-				//Remove the 'reserved args' from those that will be listable 
+				//Remove the 'reserved args' from those that will be listable and store them in argNames.rest, retaining
+				//indexes so args get passed in the correct order
 				argNames=bu.filterSplit(argNames,arg=>arg.match(/(callback|payload|unisoc)/)==null,'retainIndex');
 
+				//Store them WITH '=defaultValue'...
 				ep.args=Object.values(argNames).join(', ');
+
+				//...but for the sake of matching passed in args below we want to remove the default values
+				reqArgCount=0; //count manually the regular args without default values
+				argNames=argNames.map(arg=>{let arr=arg.split('=');if(!arr[1]){reqArgCount++};return arr[0];}); //<-- defaults^ removed here
+				argNames.rest=argNames.rest.map(arg=>arg.split('=')[0]);
 									
-				//With named args the options.reqArgCount is ignored...
-				reqArgCount-=Object.values(argNames.rest).length;
 			}else{
-				//...but if no named args exists, it's not ignored
 				ep.args=reqArgCount=options.reqArgCount || func._reqArgCount|| reqArgCount;
 				argNames=false;
 			}

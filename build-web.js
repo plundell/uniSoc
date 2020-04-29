@@ -11,8 +11,8 @@
 */
 
 (function loadUniSoc(){
-    if(!window)
-        throw new Error("Could not access the 'window'. Cannot load uniSoc.");
+    if(typeof window!='object' || !window)
+        throw new Error("ESCOPE. Could not access the 'window' object. Cannot load uniSoc.");
 
     var exporter=require("./src/web.js");
 
