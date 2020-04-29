@@ -39,7 +39,7 @@ module.exports=function export_uniSoc_node(dep={}){
 	/*
 	* @const constructor uniSoc 	A common parent for both nodejs and browser flavor
 	*/
-	const uniSoc = dep.uniSoc || dep.common || require('./common.js')(dep);
+	const uniSoc = dep.uniSoc || dep.common || require('./unisoc.common.js')(dep);
 	
 
 

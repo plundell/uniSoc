@@ -4,7 +4,7 @@
   ,"description": "Lightweight socket wrapper with promisified question/answer protocol that works over websocket, net, dgram and ipc"
   ,"author": "plundell"
   ,"license": "Apache-2.0"
-  ,"main": "src/node.js"
+  ,"main": "src/unisoc.node.js"
   ,"scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
     ,"build":"npx webpack --mode=development ./build-web.js -o dist/unisoc.js && npx webpack --mode=production ./build-web.js -o dist/unisoc.min.js"

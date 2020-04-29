@@ -18,7 +18,7 @@
 
 module.exports=function uniSoc_web_exporter(dep={}){
 
-	const uniSoc=require('./common.js')(dep);
+	const uniSoc=require('./unisoc.common.js')(dep);
 	const bu = dep.BetterUtil  					
 
 

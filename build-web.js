@@ -14,7 +14,7 @@
     if(typeof window!='object' || !window)
         throw new Error("ESCOPE. Could not access the 'window' object. Cannot load uniSoc.");
 
-    var exporter=require("./src/web.js");
+    var exporter=require("./src/unisoc.web.js");
 
     //Create a getter on the window which runs the exporter as soon as all dependencies are
     //available OR throws a clear error if we try to access it too early
