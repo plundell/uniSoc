@@ -275,18 +275,76 @@ module.exports=function export_uniSoc_common(dep={}){
 
 
 
+	/*
+	* Parse args passed to send(...args) or request(...args)
+	*
+	* @param array[subject, data..., callback] 		
+	*	- OR -
+	* @param array[object{subject,data,callback,timeout, expResCount}] 		
+	*
+	* NOTE: the later ^ can accept more args
+	* 
+	* @throws <ble EINVAL> 		payload.subject is invalid
+	*
+	* @return object 	An object with named args
+	*/
+	uniSoc.prototype.parseArgs=function(args){
+		if(args.length==1 && typeof args[0]=='object' && args[0].hasOwnProperty('subject'))
+			//This object can contain more params then vv
+			var obj=args[0];
+		else
+			obj={
+				callback:bu.getFirstOfType(args,'function',true)
+				,subject:args.shift() //first non-function is the subject
+				,data:(args.length==1 ? args[0] : !args.length ? undefined : args) //everything else is the data
+			}
+
+		//Make sure we have a string subject that does not contain the word 'undefined', because that is 
+		//most likely an error when dynamically creating the subject
+		if(typeof obj.subject!='string')
+			this.log.makeError('A string subject is required, got:',bu.logVar(obj.subject)).throw('EINVAL');
+		if(obj.subject.includes('undefined'))
+			this.log.makeError('Illegal subject contained the string "undefined": '+obj.subject).throw('EINVAL');
+
+		return obj;
+	}
 
 
 
-
-
+	/*
+	* Call an endpoint manually from another outside (good if we want to access endpoints locally)
+	*
+	* @param @see parseArgs()
+	*
+	* @throws @see parseArgs()
+	*
+	* @return Promise(mixed|<ble>) 	If $args contains callback, then this promise will ALWAYS resolve with undefined
+	*/
+	uniSoc.prototype.callEndpoint=function(...args){
+		var obj=this.parseArgs(args);
+		return new Promise((resolve,reject)=>{
+			try{
+				ep=this.getEndpoint(obj.subject);
+				if(!ep){
+					this.log.throwCode('EFAULT',"Endpoint doesn't exist: "+ep);
+				}
+				let payload={data:obj.data};
+				ep.listener.call(this,payload,resolve); //don't pass possible obj.callback here so we can handle err v the same
+			}catch(err){
+				reject(err);
+			}
+		}).then(
+			data=>{if(obj.callback){obj.callback(null,data)}else{return data}}
+			,err=>{err=this.log.makeError(err); if(obj.callback){obj.callback(err)}else{return err.reject()}}
+		)
+	}
 
 
 
 
 	/*
-	* Register a listener $func that is called if this uniSoc receives a message with $subject. Args are 
-	* passed to $func either based on name (if available, see $options.argNames) or order. 
+	* Register a handler $func that is called if this uniSoc receives a message with $subject. The payload of the 
+	* message are passed to $func either based on name (if available, see $options.argNames) or order. 
 	*
 	* NOTE: $func can get custom access by using the following reserved arg names:
 	*		'callback' - the error-first callback that sends the response to the sender
@@ -329,6 +387,8 @@ module.exports=function export_uniSoc_common(dep={}){
 				}
 			}
 
+///////////////STOPSTOP 2020-05-06: something is going wrong here, callback is not being passed out....
+
 
 			var reqArgCount=func._length|| func.length; //number of args without default values						
 
@@ -338,15 +398,14 @@ module.exports=function export_uniSoc_common(dep={}){
 				//Remove the 'reserved args' from those that will be listable and store them in argNames.rest, retaining
 				//indexes so args get passed in the correct order
 				argNames=bu.filterSplit(argNames,arg=>arg.match(/(callback|payload|unisoc)/)==null,'retainIndex');
-
 				//Store them WITH '=defaultValue'...
 				ep.args=Object.values(argNames).join(', ');
 
 				//...but for the sake of matching passed in args below we want to remove the default values
 				reqArgCount=0; //count manually the regular args without default values
-				argNames=argNames.map(arg=>{let arr=arg.split('=');if(!arr[1]){reqArgCount++};return arr[0];}); //<-- defaults^ removed here
-				argNames.rest=argNames.rest.map(arg=>arg.split('=')[0]);
-									
+				argNames.forEach((arg,i)=>{let arr=arg.split('=');if(!arr[1]){reqArgCount++}; argNames[i]=arr[0];}); //<-- defaults^ removed here
+				argNames.rest.forEach((arg,i)=>argNames.rest[i]=arg.split('=')[0]);
+
 			}else{
 				ep.args=reqArgCount=options.reqArgCount || func._reqArgCount|| reqArgCount;
 				argNames=false;
@@ -359,12 +418,16 @@ module.exports=function export_uniSoc_common(dep={}){
 				ep.description=d
 
 			/*
-			* Listener method that gets called by this.handler(). It parses the args received in the
-			* request, possibly appends the reserved ones (payload|callback|unisoc) then calls $func.
+			* Listener method wraps around $func^ and gets called by uniSoc_Client.prototype.receive() or uniSoc.prototype.callEndpoint. 
+			* It parses $payload.data (figuring out how it maps to the args expected by $func) and calls $func, then it calls $callback with
+			* the resulting value or error.
 			*
-			* @param object payload 			The entire received 'payload'.
+			* NOTE: This is where the live $payload, $callback and 'unisoc' objects are included in the call to $func
+			*
+			* @param object payload 			The entire received 'payload'. This method mainly concerns itself with payload.data (see body vv
+			*                                      for details about handling)
 			* @opt function callback 			This is the function bound in/by receive() IF we received a request (as
-			*										opposed to a message that doesn't want a response)
+			*									   opposed to a message that doesn't want a response)
 			*
 			* @return void
 			* @call(receiving unisoc)
@@ -375,16 +438,20 @@ module.exports=function export_uniSoc_common(dep={}){
 					var argsArr
 						,p
 						,ignoreReturn=false
-						,entry=this.log.makeEntry('note',`${payload.id}: Calling endpoint: ${subject}`);
+						,entry=this.log.makeEntry('info',`${payload.id}: Calling endpoint: ${subject}`);
 					;
 					switch(bu.varType(payload.data)){
 						case 'array':
-						//NOTE: if you need to pass an object as the single expected arg, then wrap it in an array
+						//Assumed to be an array of arguments passed to $func in that same order
+						// NOTE: this array should NOT consider the 'reserved' args, ie. if func(name, callback, age) then pass [name, age]
+						// NOTE2: if you need to pass an array as the single expected arg, then wrap it in another array
 							argsArr=payload.data;
 							break;
 						case 'object':
+						//Assumed to be an object of named 
+						// NOTE: if you need to pass an object as the single expected arg, then wrap it in an array
 							if(!argNames)
-								this.log.makeError("This endpoint doesn't support named args. Try consulting docs...").throw('EINVAL');
+								this.log.makeError("This endpoint doesn't support named args. Try consulting docs...").throw('EMISMATCH');
 
 							argsArr=argNames.map(name=>payload.data[name])
 							break;
@@ -392,6 +459,7 @@ module.exports=function export_uniSoc_common(dep={}){
 						case 'number':
 						case 'boolean':
 						case 'null':
+						//Assumed to be the first and only argument passed to $func
 							argsArr=[payload.data];
 							break;
 						case 'undefined':
@@ -439,7 +507,7 @@ module.exports=function export_uniSoc_common(dep={}){
 					entry.extra.push('( '+(argsArr.length ? argsArr.map(x=>bu.logVar(x,50)).join(', ') : '<void>')+' )' )
 					entry.exec();
 
-					p=bu.callInPromise(func,argsArr,options.callAs)
+					p=bu.applyPromise(func,argsArr,options.callAs)
 
 				}catch(err){
 					err=this.log.makeError(err);
@@ -547,6 +615,10 @@ module.exports=function export_uniSoc_common(dep={}){
 			return undefined;
 		}
 	}
+
+
+
+
 
 	/*
 	* Get all visible endpoints for this object. Used to display help
@@ -884,31 +956,7 @@ module.exports=function export_uniSoc_common(dep={}){
 
 
 
-	/*
-	* Parse args passed to send(...args) or request(...args)
-	*
-	* @param array[subject, data..., callback] 		
-	*	- OR -
-	* @param array[object{subject,data,callback,timeout, expResCount}] 		
-	*
-	* NOTE: the later ^ can accept more args
-	* 
-	* @return object 	An object with named args
-	* @no_instance
-	*/
-	uniSoc.prototype.parseArgs=function(args){
-		if(args.length==1 && typeof args[0]=='object' && args[0].hasOwnProperty('subject'))
-			//This object can contain more params then vv
-			var obj=args[0];
-		else
-			obj={
-				callback:bu.getFirstOfType(args,'function',true)
-				,subject:args.shift() //first non-function is the subject
-				,data:(args.length==1 ? args[0] : !args.length ? undefined : args) //everything else is the data
-			}
 
-		return obj
-	}
 
 
 	/*
@@ -960,7 +1008,7 @@ module.exports=function export_uniSoc_common(dep={}){
 	* @return Promise 				Resolves/rejects if sending succeeded
 	*/
 	uniSoc_Client.prototype.send=function send(...args){
-		var {_transmit,...payload}=this.parseArgs.call(this,args); //doesn't really need 'this', but firefox doesn't seem to like call(null,...)
+		var {_transmit,...payload}=this.parseArgs(args); 
 		
 		if(!this.connected){
 			this.disconnect('EPIPE'); //Make sure the client gets removed from the server
@@ -984,7 +1032,7 @@ module.exports=function export_uniSoc_common(dep={}){
 	*							If omitted: resolves/rejects with the response from the other side of the socket.
 	*/
 	uniSoc_Client.prototype.request=function request(...args){
-		var {callback,timeout,_transmit,...payload}=this.parseArgs.call(this,args);
+		var {callback,timeout,_transmit,...payload}=this.parseArgs(args);
 		
 		if(!this.connected){
 			this.disconnect('EPIPE'); //Make sure the client gets removed from the server
@@ -1021,7 +1069,6 @@ module.exports=function export_uniSoc_common(dep={}){
 	*								number id 				If omitted, 0 will be used, which indicates that no response
 	*														  is expected 
 	* @reject <ble TypeError> 	payload is not object
-	* @reject <ble EINVAL> 		payload.subject is invalid
 	*
 	* @resolve obj 		Resolves with the payload ready to be sent (ie. all promises resolved and preparation callbacks made)
 	*
@@ -1033,13 +1080,6 @@ module.exports=function export_uniSoc_common(dep={}){
 
 			//Then we start checking we got the right things
 			bu.checkType('object',payload);
-
-			//Make sure we have a string subject that does not contain the word 'undefined', because that is 
-			//most likely an error when dynamically creating the subject
-			if(typeof payload.subject!='string')
-				this.log.makeError('A string subject is required, got:',bu.logVar(payload.subject)).throw('EINVAL');
-			if(payload.subject.includes('undefined'))
-				this.log.makeError('Illegal subject contained the string "undefined": '+payload.subject).throw('EINVAL');
 
 
 			//Mark the object as uniSoc, so we can identify it in certain cases where other things
@@ -1312,7 +1352,8 @@ module.exports=function export_uniSoc_common(dep={}){
 
 
 	/*
-	* Callback used to respond to a request (ie. used on the non-initiator side to transmit the response)
+	* Callback used to transmit the response to a request. uniSoc_Client.prototype.receive() wraps and passes this function
+	* on to the registered endpoint.
 	*
 	* @param @bound object request 		The received payload
 	* @opt any error 					Should only be passed on error, else leave undefined. Errors may still
