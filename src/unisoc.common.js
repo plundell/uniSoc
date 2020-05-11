@@ -433,7 +433,7 @@ module.exports=function export_uniSoc_common(dep={}){
 			* @call(receiving unisoc)
 			*/
 			ep.listener=function endpointListener(payload,callback){
-				// self.log.traceFunc(arguments);
+				self.log.traceFunc(arguments);
 				try{
 					var argsArr
 						,p
@@ -506,7 +506,7 @@ module.exports=function export_uniSoc_common(dep={}){
 
 					entry.extra.push('( '+(argsArr.length ? argsArr.map(x=>bu.logVar(x,50)).join(', ') : '<void>')+' )' )
 					entry.exec();
-
+					this.log.trace("About to call endpoint func with:",argsArr);
 					p=bu.applyPromise(func,argsArr,options.callAs)
 
 				}catch(err){
