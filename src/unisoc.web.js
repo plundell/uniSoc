@@ -14,11 +14,11 @@
 * it available at window.uniSoc
 *
 */
+import * as uniSocCommon from './unisoc.common.js'
 
+export default function uniSoc_web_exporter(dep={}){
 
-module.exports=function uniSoc_web_exporter(dep={}){
-
-	const uniSoc=require('./unisoc.common.js')(dep);
+	const uniSoc=uniSocCommon(dep);
 	const bu = dep.BetterUtil  					
 
 
