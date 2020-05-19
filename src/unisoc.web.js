@@ -76,7 +76,7 @@ module.exports=function uniSoc_web_exporter(dep){
 
 			url=(document.location.protocol=='https:' ? 'wss:' : 'ws:')+url
 			if(!isReconnect)
-				this.log.info("Attempting to connect to websocket:",url).exec();
+				this.log.info("Attempting to connect to websocket:",url);
 			this.socket=new WebSocket(url,'json'); //2020-01-31: the 'json' doesn't seem to do anything...
 			this.registerAllListeners(); //will emit CONN_FAIL or _connect
 			
