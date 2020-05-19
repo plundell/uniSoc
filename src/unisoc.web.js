@@ -67,12 +67,12 @@ module.exports=function uniSoc_web_exporter(dep){
 
 			//Save any options to this object
 			if(options)
-				Object.assign(this._options,options);
+				Object.assign(this.options,options);
 
 			//Build the url
-			var url='//'+(this._options.host ? this._options.host : document.location.host);
-			if(this._options.port)
-				url+=':'+this._options.port
+			var url='//'+(this.options.host ? this.options.host : document.location.host);
+			if(this.options.port)
+				url+=':'+this.options.port
 
 			url=(document.location.protocol=='https:' ? 'wss:' : 'ws:')+url
 			if(!isReconnect)
@@ -138,7 +138,7 @@ module.exports=function uniSoc_web_exporter(dep){
 
 	/*
 	* Trigger a reconnect (and keep fireing at an interval, which is either passed in or
-	* this._options.reconnectTimeout)
+	* this.options.reconnectTimeout)
 	*
 	* @opt number interval 	The new interval between attempts to use. If reconnect has previously
 	*						 been disabled then a positive number is needed to trigger anything. The
@@ -147,15 +147,15 @@ module.exports=function uniSoc_web_exporter(dep){
 	*/
 	uniSoc_web.prototype.reconnect=function(interval){
 		if(interval && typeof interval=='number')
-			this._options.reconnectTimeout=interval;
+			this.options.reconnectTimeout=interval;
 
-		interval=this._options.reconnectTimeout;
+		interval=this.options.reconnectTimeout;
 
 		if(interval){
 			this.log.trace(`Trying to reconnect in ${interval} ms.`)
 			setTimeout(()=>this.connect(null,'reconnect'),interval)
 		}else{
-			this.log.note("Not reconnecting. See this._options.reconnectTimeout");
+			this.log.note("Not reconnecting. See this.options.reconnectTimeout");
 		}
 	}
 
@@ -164,7 +164,7 @@ module.exports=function uniSoc_web_exporter(dep){
 	* @return void
 	*/
 	uniSoc_web.prototype.abortReconnect=function(){
-		this._options.reconnectTimeout=null;
+		this.options.reconnectTimeout=null;
 	}
 
 
