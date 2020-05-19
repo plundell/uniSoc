@@ -26,7 +26,7 @@
 
 module.exports=function export_uniSoc_common(dep={}){
 
-	function missingDependency(which){throw new Error("Missing dependency for uniSoc: "+which);}
+	function missingDependency(which){console.warn('Dependencies:',dep);throw new Error("Missing dependency for uniSoc: "+which);}
 	const bu=dep.BetterUtil 				|| missingDependency('BetterUtil');
 	const BetterLog = dep.BetterLog         || missingDependency('BetterLog');
 	const BetterEvents = dep.BetterEvents   || missingDependency('BetterEvents');
