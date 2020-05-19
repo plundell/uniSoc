@@ -14,10 +14,11 @@
 * it available at window.uniSoc
 *
 */
-import * as uniSocCommon from './unisoc.common.js'
+const uniSocCommon=require('./unisoc.common.js');
 
-export default function uniSoc_web_exporter(dep={}){
+module.exports=function uniSoc_web_exporter(dep){
 
+	dep=dep||{}
 	const uniSoc=uniSocCommon(dep);
 	const bu = dep.BetterUtil  					
 
@@ -165,6 +166,8 @@ export default function uniSoc_web_exporter(dep={}){
 	uniSoc_web.prototype.abortReconnect=function(){
 		this._options.reconnectTimeout=null;
 	}
+
+
 
 	return uniSoc_web;
 }
