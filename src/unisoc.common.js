@@ -942,6 +942,12 @@ module.exports=function export_uniSoc_common(dep={}){
 		Object.defineProperty(this.receivedRequests,'length',{get:()=>Object.keys(this.receivedRequests).length});
 
 
+		Object.defineProperty(this,'history',{enumerable:true,value:{}})	
+		Object.defineProperties(this.history,{
+			sent:{enumerable:true,value:[]}
+			,received:{enumerable:true,value:[]}
+		})
+		
 
 		//Set the default EOM which should usually work... but maybe for some reason we need to change it
 		//to work with some external client or something...
@@ -1047,6 +1053,7 @@ module.exports=function export_uniSoc_common(dep={}){
 		//The following chain will always resolve (so no need to do anything with it)...
 		preparePayload.call(this,payload)
 			.then(payload=>_transmit?_transmit(payload):this._transmit(payload))
+			.then(success=>{this.history.sent.push(id); return success;})
 			.then(onSendSuccess,onSendError)
 
 		//...but it will affect the returned promise
@@ -1437,40 +1444,44 @@ module.exports=function export_uniSoc_common(dep={}){
 			if(!payload.id){
 				this.log.debug("Received message (no response expected):",payload);
 
-			}else if(payload.subject=='__uniSoc_response'){
-				receiveResponse.call(this,payload);
-				return;
-
 			}else{
-				id=payload.id+': ';
-				this.log.debug(`${id}Received request:`,payload); 
+				this.history.received.push(payload.id);
 
-				//Bind the response callback, and wrap it so it can only be called once!
-				var callback=bu.once(
-					responseCallback.bind(this,payload)
-					,()=>this.log.makeEntry('warn','responseCallback() called multiple times! This time')
-						.changeWhere(1).addFrom().exec()
-				);
-
-				//For simplicity require incoming messages to have unique id's so that logging and everything
-				//matches everywhere. If duplicates arrive the sender will just have to send again. Technically 
-				//we don't need the id's for anything beyond logging, so we could skip this rule, but what the hell, 
-				//clashes should be so very far inbetween that we may as well not bother...
-				if(this.receivedRequests.hasOwnProperty(payload.id)){
-					callback("__uniSoc_EALREADY");
+				if(payload.subject=='__uniSoc_response'){
+					receiveResponse.call(this,payload);
 					return;
 
 				}else{
-					//If we want to take any actions when we're no longer _waiting
-					if(!this.receivedRequests.length){
-						this.emit('_working');
-					}
+					id=payload.id+': ';
+					this.log.debug(`${id}Received request:`,payload); 
 
-					//In case we need to cancel the request early b/c eg. a shutdown... The callback is removed
-					//from within itself once called...
-					this.receivedRequests[payload.id]=callback;
-				}
-			} 
+					//Bind the response callback, and wrap it so it can only be called once!
+					var callback=bu.once(
+						responseCallback.bind(this,payload)
+						,()=>this.log.makeEntry('warn','responseCallback() called multiple times! This time')
+							.changeWhere(1).addFrom().exec()
+					);
+
+					//For simplicity require incoming messages to have unique id's so that logging and everything
+					//matches everywhere. If duplicates arrive the sender will just have to send again. Technically 
+					//we don't need the id's for anything beyond logging, so we could skip this rule, but what the hell, 
+					//clashes should be so very far inbetween that we may as well not bother...
+					if(this.receivedRequests.hasOwnProperty(payload.id)){
+						callback("__uniSoc_EALREADY");
+						return;
+
+					}else{
+						//If we want to take any actions when we're no longer _waiting
+						if(!this.receivedRequests.length){
+							this.emit('_working');
+						}
+
+						//In case we need to cancel the request early b/c eg. a shutdown... The callback is removed
+						//from within itself once called...
+						this.receivedRequests[payload.id]=callback;
+					}
+				} 
+			}
 
 
 			//Now either call an endpoint or a listener
