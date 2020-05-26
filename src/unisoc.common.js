@@ -41,6 +41,7 @@ module.exports=function export_uniSoc_common(dep={}){
 								//  false|'none' => change all errors to single string: 'error'
 								//  'code' => only transmit the error code, defaulting to: 'error'
 								//  function => will be set on this.onerror
+		,markRequests:true      //Should endpoint requests be "marked" with BetterLog? Default true.
 	}
 
 
@@ -503,8 +504,14 @@ module.exports=function export_uniSoc_common(dep={}){
 
 					entry.extra.push('( '+(argsArr.length ? argsArr.map(x=>bu.logVar(x,50)).join(', ') : '<void>')+' )' )
 					entry.exec();
-					this.log.trace("About to call endpoint func with:",argsArr);
-					p=bu.applyPromise(func,argsArr,options.callAs)
+
+					//As an added log-feature we attempt to "mark" this execution, which will place a line in the stack of
+					//every synchronous call to follow. NOTE: this will not cause any overhead if we don't print any of the
+					//log entries produced during the request, or if the log doesn't look for the mark when processing stacks...
+					if(this.options.markRequests)
+						p=BetterLog.markApply(payload.id,bu.applyPromise,[func,argsArr,options.callAs])
+					else
+						p=bu.applyPromise(func,argsArr,options.callAs)
 
 				}catch(err){
 					err=this.log.makeError(err);
