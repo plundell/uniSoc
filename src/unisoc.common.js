@@ -387,9 +387,6 @@ module.exports=function export_uniSoc_common(dep={}){
 				}
 			}
 
-///////////////STOPSTOP 2020-05-06: something is going wrong here, callback is not being passed out....
-
-
 			var reqArgCount=func._length|| func.length; //number of args without default values						
 
 			//Initiate object that will be stored on this.endpoints and start populating it
@@ -433,7 +430,7 @@ module.exports=function export_uniSoc_common(dep={}){
 			* @call(receiving unisoc)
 			*/
 			ep.listener=function endpointListener(payload,callback){
-				self.log.traceFunc(arguments);
+				// self.log.traceFunc(arguments);
 				try{
 					var argsArr
 						,p
@@ -725,9 +722,11 @@ module.exports=function export_uniSoc_common(dep={}){
 	*
 	* @param object obj 	  			Any object
 	* @param string prefix 	  			A string to use as first part of endpoint (will be surrounded by '/')
-	* @param object options 			Options for this method + for registerEndpoint(). Props '_all' will be
-	*									 passed to all registers, and keys matching each endpoint will be sent
-	*									 to each register individually
+	* @param object options 			Options for this method + for registerEndpoint(). 
+	*    @option object  _all.{...} 			  Will be passed to registerEndpoint() each time
+	*    @option object  [name of prop on $obj]	  Will be passed to registerEndpoint(obj.prop,...)
+	*    @option array   ignore 				  List of props on $obj to ignore
+	*    @option bool    getProps                 All props are turned into get-only endpoints without '/get' suffix
 	*
 	* @throws <BLE_TypeError>
 	*
@@ -917,10 +916,11 @@ module.exports=function export_uniSoc_common(dep={}){
 		* @prop object 	sentRequests 	Keys are numerical id's requests we've sent, values are 
 		*								callback functions for when responses arrive. 
 		*
-		* NOTE: Children will be deleted when responses arrive
+		* NOTE: Children will be deleted when responses arrive and moved to this.history.sent
 		*/
 		Object.defineProperty(this,'sentRequests',{enumerable:true,value:{}})	
-		
+
+
 		/*
 		* @method sentRequests.length 	The number of requests we're waiting for answers on
 		*/
@@ -931,7 +931,7 @@ module.exports=function export_uniSoc_common(dep={}){
 		*								currently working on a response for, values are callback 
 		*								functions that will answer them.
 		*
-		* NOTE: Props will be deleted when responses are sent
+		* NOTE: Props will be deleted when responses are sent  and moved to this.history.sent
 		*/
 		Object.defineProperty(this,'receivedRequests',{enumerable:true,value:{}})	
 
@@ -965,6 +965,7 @@ module.exports=function export_uniSoc_common(dep={}){
 	* @return true|Promise.reject(<BetterLogEntry [not logged]>) 	
 	*/
 	uniSoc_Client.prototype.afterTransmit=function(err,payload,address,port){
+
 		var fail='Failed to transmit';
 		if(err && err.toString().match(fail)) //so we don't double up
 			return this.log.makeEntry(err).reject();
@@ -976,9 +977,9 @@ module.exports=function export_uniSoc_common(dep={}){
 			}
 			id=payload.id+': ';
 		}
+
 		if(address||port)
 			what+=` to ${address||''}:${port||''}`
-
 		if(err)
 			return this.log.makeError(`${fail} ${what}:`,err).reject();
 		else{
@@ -1490,7 +1491,8 @@ module.exports=function export_uniSoc_common(dep={}){
 					//Regulare listeners get called with:
 					this.emitEvent(payload.subject,[payload.data,callback,payload.payload]);
 				}else{
-					this.log.warn(`${id}New message on subject '${payload.subject}' received, but no handler registered. Payload:`, payload);
+					this.log.warn(`${id}New ${callback?'request':'message'} on subject '${payload.subject}' received, but no handler registered.`,
+						'Payload:',payload);
 					if(callback){
 						callback('404 Not Found');
 					}
@@ -1759,7 +1761,7 @@ module.exports=function export_uniSoc_common(dep={}){
 
 
 			this.socket.onclose=(event)=>{
-				var ble=this.log.makeCodeError(event.code,event.reason);
+				var ble=this.log.makeError(event.reason).setCode(event.code);
 				if(event.wasClean){
 					ble.prepend('Websocket closed cleanly.').changeLvl('debug').exec();
 					this.on('_disconnect',()=>console.log('YUP, got _disconnect here...'));
@@ -1857,8 +1859,9 @@ module.exports=function export_uniSoc_common(dep={}){
 	* @return Promise(true)
 	*/
 	uniSoc_Websocket.prototype._transmit=function(payload){
+		// console.debug('PAYLOAD:',payload);
 		let str=JSON.stringify(payload);
-		this.log.trace("Transmitting...",bu.logVar(str,50,'noLog'));
+		this.log.trace(payload.id+": Transmitting...",bu.logVar(str,50,'noLog'));
 		this.socket.send(str, (err)=>this.afterTransmit(err,payload)); 
 	}
 
