@@ -763,14 +763,21 @@ module.exports=function export_uniSoc_common(dep={}){
 			var ep=`/${prefix}/${prop}`;
 			if(typeof obj[prop]=='function'){
 				list.push(this.registerEndpoint(ep,obj[prop],opts))
+
+			}else if(options.getProps){
+				//Props can only be fetched, not set... and not '.../get' suffix is used
+				list.push(this.registerEndpoint(ep,function get(){return obj[prop];},opts));
+
 			}else{
 				var desc=Object.getOwnPropertyDescriptor(obj,prop);
 				if(desc.hasOwnProperty('value')){
+					//Just a value, no getter and setter present...
 					list.push(this.registerEndpoint(`${ep}/get`,function get(){return obj[prop];},opts));
 					if(desc.writable){
 						list.push(this.registerEndpoint(`${ep}/set`,function set(val){return obj[prop]=val;},opts));
 					}
 				}else{
+					//This implies there are getters and setters already in place...
 					if(desc.get){
 						list.push(this.registerEndpoint(`${ep}/get`,desc.get,opts));
 					}
