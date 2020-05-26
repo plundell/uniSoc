@@ -1390,7 +1390,7 @@ module.exports=function export_uniSoc_common(dep={}){
 	async function responseCallback(request,error,data){
 		var success=true;
 		try{
-			this.log.traceFunc(arguments,`${request.id}: `);
+			this.log.makeTrace(arguments).prepend(`${request.id}: `).exec();
 			//Use the received object, but replace stuff with the new information we got. This way, 
 			//stuff like eg. 'address' and 'port' which dgram includes, gets passed back to send() 
 			//function and can be used if needed.
