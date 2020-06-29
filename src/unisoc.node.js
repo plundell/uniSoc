@@ -27,21 +27,19 @@
 module.exports=function export_uniSoc_node(dep={}){
 
 	function missingDependency(which){throw new Error("Missing dependency for uniSoc: "+which);}
-
-	/*
-	* @const object cX 		BetterUtil common utilities
-	*/
-	var cX= dep.cX || dep.util || dep.BetterUtil  || missingDependency('BetterUtil');
-	cX=cX.cX || cX 
-	dep.BetterUtil=cX;
+	const libbetter=(dep.BetterLog?dep:dep.libbetter) || missingDependency('libbetter')
 
 
 	/*
 	* @const constructor uniSoc 	A common parent for both nodejs and browser flavor
 	*/
-	const uniSoc = dep.uniSoc || dep.common || require('./unisoc.common.js')(dep);
+	const uniSoc = dep.uniSoc || dep.common || require('./unisoc.common.js')(libbetter);
 	
 
+	/*
+	* @const object cX 		BetterUtil common utilities
+	*/
+	const cX=libbetter.cX||libbetter.BetterUtil.cX;
 
 
 	/*
@@ -79,6 +77,7 @@ module.exports=function export_uniSoc_node(dep={}){
 		,'Client':uniSoc_net //unlike uniSoc_ws, _net can be used on it's own... so we export is as 'Client'
 		,'Server':uniSoc_Server
 		,'IPC':uniSoc_IPC
+		,'FakeServer':uniSoc_FakeServer
 	};
 
 
@@ -795,9 +794,17 @@ module.exports=function export_uniSoc_node(dep={}){
 
 
 
-
-
-
+	/*
+	* A server that doesn't provide any remote connectiviey, but provides "same handling". 
+	*
+	* NOTE: We could just use uniSoc_Server and not listen to anything, but this just makes it clear
+	*/
+	function uniSoc_FakeServer(name){
+		//Call the uniSoc constructor as 'this', which sets a few things on this incl log
+		uniSoc.call(this,{name:name});
+	}
+	uniSoc_FakeServer.prototype=Object.create(uniSoc.prototype); 
+	Object.defineProperty(uniSoc_FakeServer.prototype, 'constructor', {value: uniSoc_FakeServer}); 
 
 
 
@@ -1555,6 +1562,8 @@ module.exports=function export_uniSoc_node(dep={}){
 		else
 			this.socket=procOrChild;
 
+		//Set a reference on the child to this unisoc
+		Object.defineProperty(procOrChild,'unisoc',{enumerable:false,configurable:true,writable:true,value:this});
 		
 		Object.defineProperty(this,'connected',{get:()=>this.socket && this.socket.send});
 
