@@ -617,7 +617,7 @@ module.exports=function export_uniSoc_common(dep={}){
 			var ep=this.endpoints[subject]=new Endpoint(subject,func,options,this.log);
 
 
-			this.log.debug(`Added ${ep.visible ? 'secret ':''}endpoint: ${subject}(${ep.argStr})`);
+			this.log.debug(`Added ${ep.visible ? '':'secret '}endpoint: ${subject}(${ep.argStr})`);
 			return subject;
 			
 		}catch(err){
