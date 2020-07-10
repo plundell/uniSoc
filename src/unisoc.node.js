@@ -1693,6 +1693,7 @@ module.exports=function export_uniSoc_node(dep={}){
 			this.socket.send(payload,handle,callback);
 
 		}else{
+			// if(payload.data){console.log(typeof payload.data, Object.getOwnPropertyNames(payload.data));}
 			this.socket.send(payload,callback);
 		}
 

@@ -165,19 +165,21 @@ module.exports=function export_uniSoc_common(dep={}){
 			switch(String(this.options.transmitErrors).toLowerCase()){
 				case 'tostring':
 				case 'string':
-					this.onerror=function errorToString(payload){payload.error=error.toString()};
+					this.onerror=function errorToString(payload){payload.error=payload.error.toString()};
 					break;
 
 				case 'onlyprimitive':
 				case 'ifprimitive':
 					this.onerror=function passPrimitiveError(payload){
-						if(cX.isPrimitive(payload.error)){
-							payload.error=this.log.makeError(payload.error);
-							let msg=`Sending 'Internal Error' as response to request ${payload.id}.`;
-							if(payload.error.printed)
-								this.log.trace(msg);
+						//So we let primitives through, but anything else...
+						if(!cX.isPrimitive(payload.error)){
+							let handling=`Sending 'Internal Error' as response to request ${payload.id} instead of`
+								,err=this.log.makeError(payload.error)
+							;
+							if(err.printed)
+								this.log.trace(handling+" error #"+err.id);
 							else
-								payload.error.addHandling(msg).exec();
+								payload.error.addHandling(handling+" this error.").exec();
 
 							payload.error='Internal Error';
 						}
@@ -200,10 +202,14 @@ module.exports=function export_uniSoc_common(dep={}){
 				// case 'all':
 					var first=true;
 					this.onerror=function transmitErrors(payload){
-						//payload.error has already been set to the error, and payload.data==null
+						//payload.error has already been set to the error, and payload.data==null, but since regular errors don't always seem to be transmitted
+						//we make sure it's a BLE
+						if(payload.error instanceof Error && payload.error.constructor.name!='BetterLogEntry')
+							payload.error=this.log.makeError(payload.error);
+
 						if(first){
 							first=false;
-							this.log.note("Remember, we are transmitting errors...");
+							this.log.note("Remember, we are transmitting errors... here goes the first one...");
 						}
 					}
 					break;
@@ -301,7 +307,7 @@ module.exports=function export_uniSoc_common(dep={}){
 			,flags=cX.extractItems(args,knownFlags)
 		;
 
-		if(args.length==1 && typeof args[0]=='object' && args[0].hasOwnProperty('subject')){
+		if(args.length==1 && typeof args[0]=='object'){
 			//This object can contain more params then vv
 			var obj=args[0];
 
@@ -310,7 +316,7 @@ module.exports=function export_uniSoc_common(dep={}){
 				obj.flags
 				,Object.entries(cX.extract(obj,knownFlags)).filter(entry=>entry[1]).map(entry=>entry[0])
 			).filter(cX.uniqueArrayFilter)
-
+			
 		}else{
 			obj={
 				callback:cX.getFirstOfType(args,'function',true)
@@ -1185,7 +1191,6 @@ module.exports=function export_uniSoc_common(dep={}){
 	*/
 	async function preparePayload(payload){
 		try{
-
 			//Then we start checking we got the right things
 			cX.checkType('object',payload);
 
@@ -1207,7 +1212,6 @@ module.exports=function export_uniSoc_common(dep={}){
 				payload.error=err;
 			}
 
-
 			//If we have an error now (passed or caught ^, it's all the same)...
 			if(payload.error){
 				//...we make sure there's not data as well...
@@ -1228,6 +1232,9 @@ module.exports=function export_uniSoc_common(dep={}){
 				//...and we call the handler, set either in the constructor or at any later point. It can do whatever
 				//it wants with the payload...
 				this.onerror(payload);
+
+				//NOTE: if payload.error is a regular error then it may not be transmitted via a specific channel, so it's always 
+				//better to pass a string or object, eg a BetterLogEntry (which is done by this.onerror=function transmitErrors);
 			}
 
 			if(payload.data){
@@ -1239,15 +1246,13 @@ module.exports=function export_uniSoc_common(dep={}){
 			//F.Y.I what get's included when sending...
 			//  JSON.stringify({data:undefined}) => '{}'  		
 			//  JSON.stringify({data:null}) => '{"data":null}' 
-
 			//In case we want to apply futher handling to all payloads, here's the chance
 			if(typeof this.beforetransmit=='function'){
 				this.beforetransmit.call(this,payload);
+					//FutureDev: this ^ is where smarties get stupified before sending
 			}
 
 			this.log.makeEntry('debug','Payload ready:',payload).addHandling("next step is transmitting...").exec();
-
-
 			return payload;								
 			  //^ remember, async func, this will be returned in a resolved promise
 		}catch(err){
