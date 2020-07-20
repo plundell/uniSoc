@@ -1205,7 +1205,7 @@ module.exports=function export_uniSoc_node(dep={}){
 
 	
 		//Each client lives it's own life, but anything it can't do for itself this server will do for it 
-		client.registerSharedEndpoints(this);
+		client.useEndpointsFrom(this);
 		Object.defineProperty(client,'onreject',{enumerable:true,configurable:true,get:()=>this.onreject});
 		Object.defineProperty(client,'beforetransmit',{enumerable:true,configurable:true,get:()=>this.beforetransmit});
 		Object.defineProperty(client,'aftertransmit',{enumerable:true,configurable:true,get:()=>this.aftertransmit});
