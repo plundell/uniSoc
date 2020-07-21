@@ -1609,10 +1609,12 @@ module.exports=function export_uniSoc_common(dep={}){
 					//Regulare listeners get called with:
 					this.emitEvent(payload.subject,[payload.data,callback,payload.payload]);
 				}else{
-					this.log.warn(`${id}New ${callback?'request':'message'} on subject '${payload.subject}' received, but no handler registered.`,
-						'Payload:',payload);
+					let logstr=`${id}New ${callback?'request':'message'} on subject '${payload.subject}' received, but no handler registered.`;
 					if(callback){
-						callback('404 Not Found');
+						this.log.warn(`${logstr} Will respond with '404 Not Found'. Payload:`,payload);
+						callback('404 Not Found',null); //null, else we get a warning that data is still set...
+					}else{
+						this.log.warn(`${logstr} Since no response is expected this will just be ignored. Payload:`,payload);
 					}
 				}
 			}
