@@ -1436,6 +1436,9 @@ module.exports=function export_uniSoc_common(dep={}){
 				this.onresponse.call(this,payload);
 			}
 			
+		}else if(payload.error=='501 Endpoint Not Implemented'){
+			let on=getFrom(payload).replace('from','on')||'.';
+			payload.error=this.log.makeEntry('warn',`${payload.id}: The endpoint '${payload.target}' doesn't exist${on}`).exec();	
 		}else{
 			// console.log('FAILED RESPONSE:',payload.error);
 			this.log.note(`${payload.id}: Received failed ${msg}:`,this.log.makeError(payload.error).toString());
@@ -1611,8 +1614,8 @@ module.exports=function export_uniSoc_common(dep={}){
 				}else{
 					let logstr=`${id}New ${callback?'request':'message'} on subject '${payload.subject}' received, but no handler registered.`;
 					if(callback){
-						this.log.warn(`${logstr} Will respond with '404 Not Found'. Payload:`,payload);
-						callback('404 Not Found',null); //null, else we get a warning that data is still set...
+						this.log.warn(`${logstr} Will respond with '501 Endpoint Not Implemented' to request:`,payload);
+						callback('501 Endpoint Not Implemented',null); //null, else we get a warning that data is still set...
 					}else{
 						this.log.warn(`${logstr} Since no response is expected this will just be ignored. Payload:`,payload);
 					}
