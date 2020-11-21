@@ -1310,7 +1310,7 @@ module.exports=function export_uniSoc_node(dep={}){
 				})
 
 				//As soon as the last client disconnects resolve the promsie that this method has already returned
-				cX.promiseTimeout(Promise.all(proms),timeout).then(
+				cX.rejectOnUnsettledTimeout(Promise.all(proms),timeout).then(
 					function shutdown_success(){
 						this.log.info("All clients have disconnected, exiting now.");
 						resolve();
@@ -1639,6 +1639,7 @@ module.exports=function export_uniSoc_node(dep={}){
 
 				//Finally listen to all the childs events that have been extended over the socket
 				this.on(customPayload.subject,([evt,...args])=>child.emitEvent.call(p,evt,args));
+				                                  //DevNote: child^ is NOTE an instance of BetterEvents, so don't mess with emitEvent()
 			}
 			
 
@@ -1697,7 +1698,10 @@ module.exports=function export_uniSoc_node(dep={}){
 			this.socket.send(payload,callback);
 		}
 
-		return promise.then(()=>this.afterTransmit(null,payload),err=>this.afterTransmit(err,payload))
+		return promise.then(
+			success=>this.afterTransmit(null,payload)
+			,error=>this.afterTransmit(error,payload)
+		);
 	};
 
 

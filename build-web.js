@@ -6,7 +6,7 @@
 * @description Frontend component of uniSoc. Wraps around native WebSocket API (https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
 * @extends ./unisoc-common.js   
 * @depends libbetter
-* @exports n/a      This script should be bundled and loaded in the browser directly. It make the module available 
+* @exports n/a      This script should be bundled (using eg. webpack) and loaded in the browser directly. It makes the module available 
 *                   at window.uniSoc. If you don't want that you can instead require the web-component of uniSoc ./src/web.js
 */
 

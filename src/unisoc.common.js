@@ -32,20 +32,25 @@ module.exports=function export_uniSoc_common(dep={}){
 	const BetterUtil=dep.cX||dep.BetterUtil || missingDependency('BetterUtil');
 	const cX=BetterUtil.cX || BetterUtil;
 
+	const INTERNAL_TOKEN=Symbol('INTERNAL_TOKEN');
+	const devmode=BetterLog._development;
 
 	uniSoc.defaultOptions={
 		eom:'__EOM__' 			//A string that signifies the end of a message
 		,transmitErrors:'all' 	//Should errors be transmitted? This affects the default .onerror callback. Accepted values are
-								//  true|'all' => all errors passed unchanged, 
+								//  true|'all' => Default. all errors passed unchanged, 
 								//  'toString' => transmit error.toString()
-								//  'ifPrimitive' => transmit if error is a primitive value, else replace with 'Internal Error'
-								//  false|'none' => change all errors to single string: 'error'
-								//  'code' => only transmit the error code, defaulting to: 'error'
-								//  function => will be set on this.onerror
+								//  'ifPrimitive' => transmit if error is a primitive value, else replace options.defaultError
+								//  false|'none'|'default' => change all errors to options.defaultError
+								//  'code' => only transmit the error code, defaulting to options.defaultError
+								//  function => will be set on this.onerror and can alter the payload in any way
+								// NOTE: if the original error is not transmitted it is logged locally
+		,defaultError:'500 Internal Error'
 		,markRequests:true      //Should endpoint requests be "marked" with BetterLog? Default true.
 		,defaultTimeout:0 		//If no explicit timeout is passed to .request(), use this. Default 0 == infinite
-			//^TODO: move to uniSoc_Client constructor when uniSoc() knows how to get all options along prototype chain 
+			//^TODO 2020-06-17: move to uniSoc_Client constructor when uniSoc() knows how to get all options along prototype chain 
 	}
+
 
 
 /*2020-03-18: Instead of having this class rely in any way on the smart class, we've added 3 "middleware" oppertunities 
@@ -162,57 +167,67 @@ module.exports=function export_uniSoc_common(dep={}){
 		if(typeof this.options.transmitErrors=='function'){
 			this.onerror=this.options.transmitErrors;
 		}else{
+			function passDefaultError(payload){
+				//If the error hasn't already been printed, do so now...
+				payload.error=this.log.makeError(payload.error);
+				let handling=`Sending '${this.options.defaultError}' ìn response to request ${payload.id} instead of`;
+				if(payload.error.printed)
+					this.log.trace(handling+" error #"+payload.error.id);
+				else
+					payload.error.addHandling(handling+" this error.").exec();
+				
+				//...then send the default error
+				payload.error=this.options.defaultError;
+			}
+			var first=true;
 			switch(String(this.options.transmitErrors).toLowerCase()){
 				case 'tostring':
 				case 'string':
-					this.onerror=function errorToString(payload){payload.error=payload.error.toString()};
+					this.onerror=function stringifyErrors(payload){
+						if(payload.error instanceof Error){
+							if(first){
+								first=false;
+								this.log.makeEntry('warn',"Remember, we are transmitting stringified errors...").setOptions({printStackLvl:0}).exec();
+							}
+
+							//If this error hasn't already been printed, do so now...
+							if(!payload.error.isBLE||!payload.error.printed)
+								this.log.makeError(payload.error).addHandling(`Sending this error as string in response to request ${payload.id}`).exec();
+						}
+						//...then send a string
+						payload.error=payload.error.toString()
+					};
 					break;
 
 				case 'onlyprimitive':
 				case 'ifprimitive':
-					this.onerror=function passPrimitiveError(payload){
-						//So we let primitives through, but anything else...
-						if(!cX.isPrimitive(payload.error)){
-							let handling=`Sending 'Internal Error' as response to request ${payload.id} instead of`
-								,err=this.log.makeError(payload.error)
-							;
-							if(err.printed)
-								this.log.trace(handling+" error #"+err.id);
-							else
-								payload.error.addHandling(handling+" this error.").exec();
-
-							payload.error='Internal Error';
-						}
+					this.onerror=function passPrimitiveErrors(payload){
+						//Let primitives pass through, but anything else...
+						if(!cX.isPrimitive(payload.error))
+							passDefaultError.call(this,payload)
 					}
 					break;
 				case 'none':
 				case false:
-					this.onerror=function passPrimitiveError(payload){
-						payload.error=this.log.makeError(payload.error);
-						let msg=`Sending 'error' as response to request ${payload.id}.`;
-						if(payload.error.printed)
-							this.log.trace(msg);
-						else
-							payload.error.addHandling(msg).exec();
-						payload.error='error';
-					}
+				case 'default':
+					this.onerror=passDefaultError;
 					break;
-				default:
-				// case true:
-				// case 'all':
-					var first=true;
-					this.onerror=function transmitErrors(payload){
+				case true:
+				case 'all':
+					this.onerror=function transmitFullErrors(payload){
 						//payload.error has already been set to the error, and payload.data==null, but since regular errors don't always seem to be transmitted
 						//we make sure it's a BLE
-						if(payload.error instanceof Error && payload.error.constructor.name!='BetterLogEntry')
+						if(payload.error instanceof Error && !payload.error.isBLE)
 							payload.error=this.log.makeError(payload.error);
 
 						if(first){
 							first=false;
-							this.log.note("Remember, we are transmitting errors... here goes the first one...");
+							this.log.makeEntry('warn',"Remember, we are transmitting full errors...").setOptions({printStackLvl:0}).exec();
 						}
 					}
 					break;
+				default:
+					this.log.makeError("Invalid value for option 'transmitErrors': ",this.options.transmitErrors).setCode('EINVAL').exec().throw();
 			}
 		}
 
@@ -238,6 +253,8 @@ module.exports=function export_uniSoc_common(dep={}){
 		this.registerEndpoint('help',()=>Object.entries(this.listVisibleEndpoints())
 			.map(([name,{argStr,description}])=>`${name}(${argStr})${description ? ' '+description:''}`).join('\n')
 		);
+
+		this.log.trace(`Common constructor ran to end with:`,this);
 		
 	}
 	uniSoc.prototype=Object.create(BetterEvents.prototype); 
@@ -302,8 +319,15 @@ module.exports=function export_uniSoc_common(dep={}){
 	* @return object 	An object with named args
 	*/
 	uniSoc.prototype.parseArgs=function(args){
-		//First get any known flags
-		var knownFlags=['resolveWithPayload']
+		if(!args || !Array.isArray(args) || arguments.length>1)
+			this.log.throwCode('BUGBUG','uniSoc.parseArgs() should be called with a singal array, got:',arguments);
+		
+		//In case it's called repeatedly
+		if(args[0]&&args[0]._parsed)
+			return args[0];
+
+		//First get any known flags which were passed as a seperate arg... (we get more below... vv)
+		var knownFlags=['resolveWithPayload','cacheResponse',INTERNAL_TOKEN]
 			,flags=cX.extractItems(args,knownFlags)
 		;
 
@@ -311,27 +335,38 @@ module.exports=function export_uniSoc_common(dep={}){
 			//This object can contain more params then vv
 			var obj=args[0];
 
-			//If any flags are set as props on this obj
-			obj.flags=([]).concat(
-				obj.flags
-				,Object.entries(cX.extract(obj,knownFlags)).filter(entry=>entry[1]).map(entry=>entry[0])
-			).filter(cX.uniqueArrayFilter)
+			//If any flags are set as props on this obj                                  .....here ^^
+			flags=flags.concat(
+				obj.flags //an array of flags
+				,Object.entries(cX.extract(obj,knownFlags)).filter(entry=>entry[1]).map(entry=>entry[0]) //flags set as individual props
+			)
 			
 		}else{
 			obj={
-				callback:cX.getFirstOfType(args,'function',true)
+				callback:cX.getFirstOfType(args,'function','extract from args') 
 				,subject:args.shift() //first non-function is the subject
-				,data:(args.length==1 ? args[0] : (!args.length ? undefined : args)) //everything else is the data
-				,flags
+				,data:(!args.length ? undefined : args) //everything else is the data, which will be an array or undefined 
+				  //ProTip: If you want to send named args you have to pass in an object (see first block ^)
 			}
 		}
 
 		//Make sure we have a string subject that does not contain the word 'undefined', because that is 
-		//most likely an error when dynamically creating the subject
+		//most likely an error when dynamically creating the subject and as such NOT an allowed subject
 		if(typeof obj.subject!='string')
 			this.log.makeError('A string subject is required, got:',cX.logVar(obj.subject)).throw('EINVAL');
 		if(obj.subject.includes('undefined'))
 			this.log.makeError('Illegal subject contained the string "undefined": '+obj.subject).throw('EINVAL');
+
+		//Finally, all props should not be transmitted, so we set them as non-enumerable here
+		Object.defineProperties(obj,{
+			'_parsed':   {enumerable:false, configurable:true, value:true}
+			,'_transmit':{enumerable:false, configurable:true, value:typeof obj._transmit=='function'?obj._transmit:undefined}
+			,'flags':    {enumerable:false, configurable:true, value:flags.filter(f=>typeof f=='string' && f).filter(cX.uniqueArrayFilter)}
+			,'callback': {enumerable:false, configurable:true, value:typeof obj.callback=='function'?obj.callback:undefined}
+
+			,'timeout':  {enumerable:false, configurable:true, value:typeof obj.timeout=='number'?obj.timeout:this.options.defaultTimeout}
+			  //^use default timeout if none is given. 0 => infinite
+		})
 
 		return obj;
 	}
@@ -390,7 +425,6 @@ module.exports=function export_uniSoc_common(dep={}){
 	* @param object 	options 	Available: 
 	*									argNames(array)
 	*									reqArgCount(number)
-	*									callAs(object)
 	*									secret(boolean)
 	* @param
 	*
@@ -398,8 +432,6 @@ module.exports=function export_uniSoc_common(dep={}){
 	*/
 	function Endpoint(subject,listener,options,log){
 		cX.checkTypes(['string','function','object','<BetterLog>'],[subject,listener,options,log]);
-
-		this.listener=listener;
 
 		Object.defineProperty(this,'isEndpoint',{value:true});
 
@@ -448,7 +480,9 @@ module.exports=function export_uniSoc_common(dep={}){
 		//makes it secret from the other side of the socket.
 		this.visible=options.secret?false:true;
 
-		this.callAs=options.callAs;
+		//Finally, once we've figured out the arg names we bind the listener if opted
+		this.listener=typeof options.callAs=='object' ? listener.bind(options.callAs) : listener;
+
 
 	}
 
@@ -467,12 +501,12 @@ module.exports=function export_uniSoc_common(dep={}){
 	*
 	* @return void
 	*/
-	Endpoint.prototype.execute=function executeEndpoint(receiver,payload,callback){
+	Endpoint.prototype.execute=function(receiver,payload,callback){
 		try{
 			var argsArr
 				,p
 				,ignoreReturn=false
-				,entry=receiver.log.makeEntry('info',`${payload.id}: Calling endpoint: ${payload.subject}`);
+				,entry=receiver.log.makeEntry('debug',`Calling endpoint: ${payload.subject}`);
 			;
 			switch(cX.varType(payload.data)){
 				case 'array':
@@ -542,51 +576,68 @@ module.exports=function export_uniSoc_common(dep={}){
 			entry.exec();
 
 			//As an added log-feature we attempt to "mark" this execution, which will place a line in the stack of
-			//every synchronous call to follow. NOTE: this will not cause any overhead if we don't print any of the
-			//log entries produced during the request, or if the log doesn't look for the mark when processing stacks...
-			if(receiver.options.markRequests)
-				p=BetterLog.markApply(payload.id,cX.applyPromise,[this.listener,argsArr,this.callAs])
-			else
-				p=cX.applyPromise(this.listener,argsArr,this.callAs)
+			//every synchronous call to follow. NOTE: this will not cause any overhead if we don't exec any of the
+			//log entries produced during the request...
+			let listener=cX.createPromiseFunc(receiver.markMethod(payload.id,this.listener));
+			var promise=listener.apply(this,argsArr);
+			 //Remember: option.callAs may have been pased to Endpoint(), in which case this^ has no effect
 
 		}catch(err){
 			err=receiver.log.makeError(err);
 			if(err.code=='EINVAL'){
 				err.exec(); //print here...
-				p=Promise.reject(err.toString()); //...but also send msg over socket as string
+				promise=Promise.reject(err.toString()); //...but also send msg over socket as string
 			}else{
-				p=err.reject(); //these will get caught in preparePayload(), logged there, and InternalError sent over socket
+				promise=err.reject(); //these will get caught in preparePayload() and handled by this.onerror
 			}
 		}
-
-		var who=(payload.id?payload.id+': ':'');
+		var markedlog=receiver.log.mark(payload.id);
 		if(typeof callback=='function'){ //this is the callback created in receive() and is a bound and once'd version of sendResponse()
 			//RESPONSE EXPECTED
 			if(this.args && this.args.rest.includes('callback')){
 				//If you've asked for the callback then it's up to you to call it if you want something sent, error or success
 				//Uncaught errors get logged vv
 			}else{
-				p=p.then(
+				promise=promise.then(
 					function respondingWithData(data){callback(null,data)}
 					,function respondingWithError(err){callback(err,null)}
 					  //^NOTE: if we don't pass null as arg#2 then the incoming data will stand, which will generate a WARN
 				)
 			}
 			//If the callback fails... (ie. there is a problem in sendResponse() or thereunder)
-			p.catch(function sendResponse_failed(e){receiver.log.error(`${who}Failed to send a response to the request.`,e)});
+			promise.catch(function sendResponse_failed(e){markedlog.error(`Failed to send response.`,e)});
 		}else{
 			//NO RESPONSE EXPECTED
-			p.then(
+			promise.then(
 				function respondingWithData(data){
 					(typeof data!='undefined')
-						&&receiver.log.note(`${who}Endpoint returned data but none was expected:`,data)
+						&&markedlog.note(`Endpoint returned data but none was expected:`,data)
 				}
-				,function endpointFunctionError(err){receiver.log.error(`${who}Endpoint call failed.`,err)}
+				,function endpointFunctionError(err){markedlog.error(`Endpoint call failed.`,err)}
 			);
 		}
 
 		return;
 	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 	/*
@@ -617,7 +668,7 @@ module.exports=function export_uniSoc_common(dep={}){
 
 			//Unlike events, only a single endpoint may be registered, so make sure it doesn't already exist
 			if(this.hasEndpoint(subject,'localOnly'))
-				throw "EEXISTS"
+				this.log.throwCode("EEXISTS",`The endpoint '${subject}' already exists, cannot register new one.`);
 
 			//Then create and register it
 			var ep=this.endpoints[subject]=new Endpoint(subject,func,options,this.log);
@@ -633,7 +684,25 @@ module.exports=function export_uniSoc_common(dep={}){
 	}
 
 
+	/*
+	* Prevent a secondary endpoint from being reached by inserting a block on the local endpoints object. This can
+	* be removed just like any other endpoint
+	*
+	* @param string subject
+	*
+	* @throws 'EEXIST'
+	* @return void
+	*/
+	uniSoc.prototype.blockEndpoint=function blockEndpoint(subject){
+		//Unlike events, only a single endpoint may be registered, so make sure it doesn't already exist
+		if(this.hasEndpoint(subject,'localOnly')=='local') //if it's already blocked, let run
+			this.log.throwCode("EEXISTS",`Cannot block existing endpoint '${subject}'.`);
 
+		this.log.debug(`Blocking endpoint: ${subject}`);
+		this.endpoints[subject]=false;
+		
+		return;
+	}
 
 
 
@@ -680,14 +749,37 @@ module.exports=function export_uniSoc_common(dep={}){
 				}
 			}
 			// this.log.trace('Returning:',ep);
-			return ep; //can be undefined
+			return ep; //will be undefined (no enpoint found) or false (@see blockEndpoint)
 		}catch(err){
 			this.log.error(`BUGBUG: Failed to get endpoint '${subject}'`,err,{ep,source});
 			return undefined;
 		}
 	}
 
-
+	/*
+	* Check if and endpoint or block exists
+	*
+	* @param string subject
+	* @opt boolean localOnly  If truthy will only look at locally registered endpoints
+	*
+	* @return 'local'|'secondary'|'block'|undefined
+	*/
+	uniSoc.prototype.hasEndpoint=function(subject,localOnly){
+		if(this.endpoints.hasOwnProperty(subject)){
+			if(this.endpoints[subject])
+				return 'local';
+			else
+				return 'block';
+		}
+		if(!localOnly){
+			let ep=this.getEndpoint(subject,localOnly);
+			if(ep)
+				return 'secondary';
+			else if(ep===false)
+				return 'block';
+		}
+		return undefined
+	}
 
 
 
@@ -712,16 +804,7 @@ module.exports=function export_uniSoc_common(dep={}){
 	}
 
 
-	/*
-	* Check if and endpoint or secret endpoint exists
-	*
-	* @param string subject
-	*
-	* @return boolean
-	*/
-	uniSoc.prototype.hasEndpoint=function(subject,localOnly){
-		return this.getEndpoint(subject,localOnly) ? true : false;
-	}
+	
 
 
 
@@ -729,16 +812,37 @@ module.exports=function export_uniSoc_common(dep={}){
 	/*
 	* Remove an endpoint or secret endpoint
 	*
-	* @param string endpoint
+	* @param string subject
 	*
-	* @return void
+	* @return boolean 		True if an endpoint was unregistered, else false
 	*/
 	uniSoc.prototype.unregisterEndpoint=function(subject){
-		delete this.endpoints[subject]
-		return;
+		if(this.hasEndpoint(subject,true)){
+			delete this.endpoints[subject]
+			return true;
+		}else{
+			return false;
+		}
 	}
 
-
+	/*
+	* Unregister all endpoints that match...
+	*
+	* @param string|<RegExp> strOrRegexp   Anything that can be passed to String.match()
+	*
+	* @return array[subject] 		A list of subjects of unregistered endpoints (can be empty)
+	*/
+	uniSoc.prototype.unregisterEndpoints=function(strOrRegexp){
+		var removed=[];
+		cX.checkType(['string','<RegExp>'],strOrRegexp)
+		Object.keys(this.endpoints).forEach(subject=>{
+			if(subject.match(strOrRegexp)){
+				this.unregisterEndpoint(subject);
+				removed.push(subject);
+			}
+		})
+		return removed;
+	}
 
 
 
@@ -857,6 +961,7 @@ module.exports=function export_uniSoc_common(dep={}){
 		props.forEach(prop=>{
 			//Build options
 			var opts=Object.assign({callAs:obj},options._all,options[prop]);
+			 //DevNote: We use callAs instead of bind so that Endpoint() can get a list of args the func accepts
 
 			var ep=`/${prefix}/${prop}`;
 			if(typeof obj[prop]=='function'){
@@ -1018,12 +1123,15 @@ module.exports=function export_uniSoc_common(dep={}){
 		uniSoc.call(this,options);
 
 		/*
-		* @prop object 	sentRequests 	Keys are numerical id's requests we've sent, values are 
+		* @prop object 	sentRequests 	Keys are numerical id's of pending requests we've successfully transmitted sent, values are 
 		*								callback functions for when responses arrive. 
 		*
-		* NOTE: Children will be deleted when responses arrive and moved to this.history.sent
+		* NOTE: Children will be deleted when responses arrive
 		*/
 		Object.defineProperty(this,'sentRequests',{enumerable:true,value:{}})	
+
+//TODO 2020-11-03: create option NOT to allow concurrent requests, using the same promise mechanism as storePendingResponse()... store
+//                 the promise and all callbacks here ^
 
 
 		/*
@@ -1036,9 +1144,17 @@ module.exports=function export_uniSoc_common(dep={}){
 		*								currently working on a response for, values are callback 
 		*								functions that will answer them.
 		*
-		* NOTE: Props will be deleted when responses are sent  and moved to this.history.sent
+		* NOTE: Children will be deleted when responses are sent
 		*/
 		Object.defineProperty(this,'receivedRequests',{enumerable:true,value:{}})	
+
+
+		/*
+		* @prop object cachedResponses  Keys are a combination of request subject and data (@see makeCacheKey()), values are 
+		*                               objects {err,data}
+		*/
+		Object.defineProperty(this,'cachedResponses',{enumerable:true,value:{}})	
+
 
 		/*
 		* @method receivedRequests.length 	The number of requests we're currently working on and are 
@@ -1047,7 +1163,7 @@ module.exports=function export_uniSoc_common(dep={}){
 		Object.defineProperty(this.receivedRequests,'length',{get:()=>Object.keys(this.receivedRequests).length});
 
 
-		Object.defineProperty(this,'history',{enumerable:true,value:{}})	
+		Object.defineProperty(this,'history',{value:{}})	
 		Object.defineProperties(this.history,{
 			sent:{enumerable:true,value:[]}
 			,received:{enumerable:true,value:[]}
@@ -1062,11 +1178,22 @@ module.exports=function export_uniSoc_common(dep={}){
 	Object.defineProperty(uniSoc_Client.prototype, 'constructor', {value: uniSoc_Client}); 
 
 
-
-
-
-
-
+	/*
+	* IF options.markRequest => wrap a method so BetterLog will mark any entries from within it
+	*
+	* @param number|string|object id 	A numeric string or number. Not 0
+	* @param function
+	*
+	* @return function  
+	*/
+	uniSoc_Client.prototype.markMethod=function(id,method){
+		id=Number((typeof id=='object' && id) ? id.id : id);
+		if(id && this.options.markRequests){
+			return BetterLog.markFunction(id,method);
+		}else{
+			return method;
+		}
+	}
 
 
 
@@ -1076,17 +1203,28 @@ module.exports=function export_uniSoc_common(dep={}){
 	* @return true|Promise.reject(<BetterLogEntry [not logged]>) 	
 	*/
 	uniSoc_Client.prototype.afterTransmit=function(err,payload,address,port){
-
+		try{			
+			return this.markMethod(payload,_afterTransmit).apply(this,arguments);
+		}catch(e){
+			return this.log.makeError(e,arguments).setCode('BUGBUG').reject()
+		}		
+	}
+	function _afterTransmit(err,payload,address,port){
 		var fail='Failed to transmit';
 		if(err && err.toString().match(fail)) //so we don't double up
 			return this.log.makeEntry(err).reject();
 
-		var id='',what=(payload.subject=='__uniSoc_response'?'response':'message')
-		if(payload.id){
-			if(this.sentRequests[payload.id]){
-				what='request'
+		var lvl='info',what='';;
+		if(payload.id && this.sentRequests[payload.id]){
+			what='request'
+		}else if(payload.subject=='__uniSoc_response'){
+			if(payload.error){
+				what='error ';
+				lvl='note';
 			}
-			id=payload.id+': ';
+			what+='response';
+		}else{
+			what='message'
 		}
 
 		if(address||port)
@@ -1094,11 +1232,13 @@ module.exports=function export_uniSoc_common(dep={}){
 		if(err)
 			return this.log.makeError(`${fail} ${what}:`,err).reject();
 		else{
-			this.log.info(`${id}Successfully sent ${what}:`
-				,'subject: '+(payload.target||payload.subject)+'\n' //\n=>all extra on own line
-				,'error: '+cX.logVar(payload.error)
-				,'data: '+cX.logVar(payload.data)
-			)
+			let keys=Object.keys(payload);
+			cX.extractItems(keys,['id','__uniSoc',keys.includes('target')?'subject':undefined]);
+			cX.manualSort(keys,['target','subject','error','data']);
+			var payloadStr=keys.map(key=>`${key}: ${cX.logVar(payload[key],60)}`);
+			payloadStr[0]+='\n'; //this forces each item in the array to be printed on it's own line
+			this.log[lvl](`Sent ${what}:`,...payloadStr);
+
 			
 			//In case we want to apply futher handling to all successfully transmitted messages, here's the chance
 			if(typeof this.aftertransmit=='function'){
@@ -1126,8 +1266,10 @@ module.exports=function export_uniSoc_common(dep={}){
 			this.disconnect('EPIPE'); //Make sure the client gets removed from the server
 			return this.log.makeError('Socket is not open, failed to send...').setCode('EPIPE').reject();
 		}
+		//Make sure we have an id
+		payload.id=typeof payload.id=='number' ? payload.id : 0
 
-		return preparePayload.call(this,payload)
+		return this.markMethod(payload.id,preparePayload).call(this,payload)
 			.then(payload=> _transmit?_transmit(payload):this._transmit(payload)) //the _transmit() method should log
 		;
 	}
@@ -1144,26 +1286,195 @@ module.exports=function export_uniSoc_common(dep={}){
 	*							If passed: it resolves with id when sending succeedes (id used to unregister request). 
 	*							If omitted: resolves/rejects with the response from the other side of the socket.
 	*/
-	uniSoc_Client.prototype.request=function request(...args){
-		var {callback,timeout,flags,_transmit,...payload}=this.parseArgs(args);
+	uniSoc_Client.prototype.request=function(...args){
+		var parsed=this.parseArgs(args);
 		
 		if(!this.connected){
 			this.disconnect('EPIPE'); //Make sure the client gets removed from the server
 			return this.log.makeError('Socket is not open, failed to send...').setCode('EPIPE').reject();
 		}
-		
-		var [id,promise,onSendSuccess,onSendError]=prepareRequest.call(this,callback,timeout,flags.includes('resolveWithPayload'));
-		payload.id=id; //this id is was identfies the msg as a request() and not a send()
+
+		//Check if we're caching and if so if there is already a cache...
+		if(parsed.flags.includes('cacheResponse')){
+			if(parsed.callback)
+				this.log.throwCode('EMISMATCH',"Cannot combine a callback with flag 'cacheResponse'. Can only cache a single response.",arguments);
+			
+			var cache=this.getCachedResponse(parsed);
+			if(cache){
+				let logStr='Not making additional request, ', logLvl=devmode?'note':'info';
+				if(cX.varType(cache)=='promise'){
+					this.log[logLvl](logStr+"waiting for pending request instead.",parsed);
+				}else if(cache.error){
+					this.log[logLvl](logStr+'rejecting immediately with cached response instead.',cache);
+				}else{
+					this.log[logLvl](logStr+'resolving immediately with cached response instead.',cache);
+				}
+			}
+		}
+
+		//Create the promise we'll return to the external caller...
+		if(cache){
+			var promiseToReturn=Promise.resolve(cache);
+		}else{
+			//If no id is set, generate one now
+			if(typeof parsed.id!='number')
+				Object.defineProperty(parsed,'id',{enumerable:true,value:this.generateRequestId()});
+			else if(this.sentRequests.hasOwnProperty(parsed.id))
+				this.log.throwCode("EALREADY","Another pending request is already using id "+parsed.id); 
+
+			//Prepare the return promise and transmit callbacks
+			var [promiseToReturn,onSendSuccess,onSendError]=prepareRequest.call(this,parsed);
+			  //How the promise^ settles is determined by if .callback is passed or not...
+
+			//Prepare the payload by awaiting any pending data, then transmit
+			this.markMethod(parsed.id,preparePayload).call(this,parsed)
+				.then(payload=>payload._transmit?payload._transmit(payload):this._transmit(payload))
+				.then(onSendSuccess,onSendError)
+		}
 
 
-		//The following chain will always resolve (so no need to do anything with it)...
-		preparePayload.call(this,payload)
-			.then(payload=>_transmit?_transmit(payload):this._transmit(payload))
-			.then(success=>{this.history.sent.push(id); return success;})
-			.then(onSendSuccess,onSendError)
+		//...and return it
+		if(parsed.callback){
+			//In this case $promise will resolve/reject if transmitting succeeds/fails
+			return promiseToReturn;
 
-		//...but it will affect the returned promise
-		return promise;
+		}else{
+			//In this case that^ still applies, but here errors can also be received from the other end 
+			return promiseToReturn.then(response=>{
+				if(response.error)
+					throw response.error;
+				else if(parsed.flags.includes('resolveWithPayload'))
+					return response;
+				else
+					return response.data;
+			});
+		}
+	}
+
+
+
+
+
+	
+
+
+
+
+
+
+
+//TODO 2020-11-03: create option NOT to allow concurrent requests, using the same promise mechanism as storePendingResponse()...
+	/*
+	* Before transmitting a request, this 
+	*
+	* @param object payload       The request payload we're about to transmit
+	*
+	* @return function|undefined  A callback to be called when response comes in, or undefined if something went wrong
+	*/
+	function storePendingResponse(payload){
+		var key=makeCacheKey(payload);
+
+		//Sanity check, make sure there isn't already something stored here
+		if(this.cachedResponses.hasOwnProperty(key)){
+			this.log.makeEntry('warn',"Trying to cache the same request again! This shouldn't happen...",{payload,existing:this.cachedResponses})
+				.setCode('BUGBUG')
+				.addHandling("This request will proceed, but it's response won't be cached.")
+				.exec();
+			return;
+		}
+
+		var pending=cX.exposedPromise();
+
+		//Store the promise for now... (which getCachedResponse() know what to do with)
+		this.cachedResponses[key]=pending.promise;
+
+		//...when the response comes in...
+		pending.promise.then(response=>{
+			//...as long as the cache hasn't been deleted in the meantime
+			if(!this.cachedResponses.hasOwnProperty(key)){
+				this.log.debug(".deleteCachedResponse() has already been called, ie. this response won't be cached.",response);
+				return;
+			}
+
+			//...store it instead of the promise unless there's a problem with sending or receiving no response at all!
+			if(response.error && (response.error.code=='ETIME'||response.error.code=='ESEND')){
+				delete this.cachedResponses[key];
+			}else{
+				this.cachedResponses[key]=response;
+			}
+
+		});
+
+		return pending.resolve;
+	}
+
+	function makeCacheKey(payload){
+		return `${payload.subject}(${payload.data!=undefined?JSON.stringify(payload.data):''})`;
+	}
+	uniSoc_Client.prototype.makeCacheKey=makeCacheKey;
+
+	/*
+	* Check if a cached response exists
+	*
+	* @params @see this.parseArgs()
+	*
+	* @return string|undefined 	The string can be 'pending', 'error', 'ready'
+	*/
+	uniSoc_Client.prototype.hasCachedResponse=function(){
+		var cache=this.getCachedResponse.apply(this,arguments)
+
+		switch(cX.varType(cache)){
+			case 'promise': return 'pending';
+			case 'undefined': return undefined;
+			case 'object':
+				if(cache.error)
+					return 'error';
+				else
+					return 'ready';
+			default:
+				this.log.makeError("Unexpected cached response:",{args:arguments, cache}).setCode('BUGBUG').exec();
+		}
+	}
+
+
+	/*
+	* Get a cached response
+	*
+	* @params @see this.parseArgs()
+	*
+	* @return Promise|object|undefined 
+	*/
+	uniSoc_Client.prototype.getCachedResponse=function(...args){
+		var key=makeCacheKey(this.parseArgs(args));
+		if(this.cachedResponses.hasOwnProperty(key)){
+			if(typeof this.cachedResponses[key]!='object') //sanity check
+				delete this.cachedResponses[key]; 
+			else
+				return this.cachedResponses[key]; //promise or object
+		}
+		return undefined;
+	}
+
+
+
+
+
+
+	/*
+	* Delete a cached response so a new one can be cached
+	*
+	* @params @see this.parseArgs()
+	*
+	* @return boolean     True if a response was removed, else false;
+	*/
+	uniSoc_Client.prototype.deleteCachedResponse=function(...args){
+		var key=makeCacheKey(this.parseArgs(args))
+		if(!this.cachedResponses.hasOwnProperty(key)){
+			return false;
+		}else{
+			delete this.cachedResponses[key];
+			return true;
+		}
 	}
 
 
@@ -1174,7 +1485,7 @@ module.exports=function export_uniSoc_common(dep={}){
 
 	/*
 	* Prepare a payload to be sent via uniSoc, mainly by waiting for promises to resolve and making
-	* sure no Error objects get transfered
+	* sure errors are handled, but also cleaning of the object from possible unwanted stuff...
 	*
 	* @param object payload 	Object which contains props (all but the first are optional):
 	*								string subject 			
@@ -1182,136 +1493,149 @@ module.exports=function export_uniSoc_common(dep={}){
 	*								string|number error 	Instances of Error will be replaced by string 'Internal Error
 	*								number id 				If omitted, 0 will be used, which indicates that no response
 	*														  is expected 
+	*
+	* @return Promise
+	* @resolve object 			The $payload
 	* @reject <ble TypeError> 	payload is not object
 	*
-	* @resolve obj 		Resolves with the payload ready to be sent (ie. all promises resolved and preparation callbacks made)
-	*
 	* @call(<uniSoc_Client>)
-	* @async
 	*/
-	async function preparePayload(payload){
-		try{
-			//Then we start checking we got the right things
-			cX.checkType('object',payload);
+	function preparePayload(payload){
+		//Sanity check
+		if(!payload || typeof payload!='object')
+			return this.log.makeError("Payload should be an object, got:",payload).setCode("BUGBUG").reject();
 
-
-			//Mark the object as uniSoc, so we can identify it in certain cases where other things
-			//may be transmitted on the same socket
-			payload.__uniSoc=true;
-
-			//Make sure we have an id, >0 if this is the response to a request, else 0 which implies
-			//that we're sending something and not expecting a response
-			payload.id=typeof payload.id=='number' ? payload.id : 0
-
-
-			//Await the data and error, and if anything goes wrong it's the same as if an error was passed
-			try{
-				payload.error=await payload.error; 
-				payload.data=await payload.data;
-			}catch(err){
-				payload.error=err;
+		//Make sure we didn't get both error and data
+		if(payload.error && payload.data){
+			let msg="Got data and error. Sending the error and discarding";
+			if(cX.varType(payload.data)=='promise'){
+				//Don't wait for data to resolve... just log now and then again on resolve
+				let entryid=this.log.makeEntry('warn',msg+" promised data (see later log)").exec().id;
+				payload.data
+					.then(data=>this.log.warn(`Discarded data from entry #${entryid}:`,data))
+					.catch(err=>this.log.warn(`Discarded promise from entry #${entryid} rejected:`,err))
+			}else{
+				this.log.warn(msg+" this data:",payload.data);
 			}
-
-			//If we have an error now (passed or caught ^, it's all the same)...
-			if(payload.error){
-				//...we make sure there's not data as well...
-				if(payload.data){
-					let msg="Got data and error. Sending the error and discarding"
-					if(cX.varType(payload.data)=='promise'){
-						//Don't wait for data to resolve... just log now and then again on resolve
-						let ble=this.log.makeEntry('warn',msg+" promised data (see later log)").exec();
-						payload.data
-							.then(data=>this.log.warn(`Discarded data from entry #${ble.id}:`,data))
-							.catch(err=>this.log.warn(`Discarded promise from entry #${ble.id} rejected:`,err))
-					}else{
-						this.log.warn(msg+" this data:",payload.data);
-					}
-					payload.data=null;
-				}
-
-				//...and we call the handler, set either in the constructor or at any later point. It can do whatever
-				//it wants with the payload...
-				this.onerror(payload);
-
-				//NOTE: if payload.error is a regular error then it may not be transmitted via a specific channel, so it's always 
-				//better to pass a string or object, eg a BetterLogEntry (which is done by this.onerror=function transmitErrors);
-			}
-
-			if(payload.data){
-	//TODO 2020-06-18: If a function is sent, register a secret endpoint on this end, then have the other end create a function
-	//					that will call this endpoint...
-
-			}
-
-			//F.Y.I what get's included when sending...
-			//  JSON.stringify({data:undefined}) => '{}'  		
-			//  JSON.stringify({data:null}) => '{"data":null}' 
-			//In case we want to apply futher handling to all payloads, here's the chance
-			if(typeof this.beforetransmit=='function'){
-				this.beforetransmit.call(this,payload);
-					//FutureDev: this ^ is where smarties get stupified before sending
-			}
-
-			this.log.makeEntry('debug','Payload ready:',payload).addHandling("next step is transmitting...").exec();
-			return payload;								
-			  //^ remember, async func, this will be returned in a resolved promise
-		}catch(err){
-			return this.log.makeError('Failed to prepare payload',err).reject()
+			payload.data=null;
 		}
+		
+		//Mark the object as uniSoc, so we can identify it in certain cases where other things
+		//may be transmitted on the same socket
+		payload.__uniSoc=true;
+
+		//Now await the data in case it's async
+		var stack=(new Error()).stack;
+		return Promise.resolve(payload.data)
+			.then(
+				data=>payload.data=data
+				,err=>{payload.data=null;payload.error=err}
+			)
+			.then(this.markMethod(payload.id,(function _preparePayload(){
+				try{
+					//F.Y.I what get's included when sending...
+					//  JSON.stringify({data:undefined}) => '{}'  		
+					//  JSON.stringify({data:null}) => '{"data":null}' 
+
+					//If we have an error we call a handler set either in the constructor or at any later point. It can do whatever
+					//it wants with the payload, including preventing sending altogether by throwing...
+					if(payload.error){
+						this.onerror(payload);
+						//NOTE: if the error is a regular <Error> then by virtue of whichever underlying transport is being used it may not be transmitted,
+						//so it's always better to pass a string or object, eg a BetterLogEntry (which is the default behaviour, @see transmitErrors());
+					}
+
+					if(typeof payload.data=='function'){
+						this.log.warn("TODO: Sending functions should register a a secret endpoint on this end, then have the other end create a function"
+								+"that will call this endpoint...")
+					}
+
+					//If you want to send an error as data you are free to do so, but we warn in case it was unintentionall
+					if(payload.data instanceof Error && (!payload.data.isBLE||payload.data.lvl<6)){
+						this.log.warn(`The payload has a <${payload.data.constructor.name}> set as .data, is that intentional?`);
+					}
+
+					//In case we want to apply futher handling to all payloads, here's the chance
+					if(typeof this.beforetransmit=='function'){
+						this.beforetransmit.call(this,payload);
+						//NOTE: This can be 
+					}
+
+
+					this.log.makeEntry('debug','Payload ready:',payload).appendStack(stack).addHandling("next step is transmitting...").exec();
+					return payload;
+				}catch(err){
+					throw this.log.makeError('Failed to prepare payload',err).appendStack(stack);
+				}
+			}).bind(this)))
+		;
 
 	}
 
+
+	uniSoc_Client.prototype.generateRequestId=function(){
+		// Start by generating an id used to identify the response when it comes
+		var id=Math.floor(Math.random()*1000000000)+1; //+1 we we don't get 0 
+		// console.log(this);
+		while(this.sentRequests[id]){
+			id+=1;
+		}
+
+		return id;
+	}
 
 
 	/*
 	* Prepare a callback for a request
 	*
-	* @opt function responseCallback 	Called with each (ie. possibly multiple) resopnses with args (err,data,obj).
-	* @opt number timeout  				ms until request failes with 'timeout' error. Defaults to this.0 == infinite
-	* @opt bool resolveWithPayload		If $responseCallback isn't passed and this is true, the entire payload is passed instead
-	*									 of just the data when the promise resolves
+	* @param object request
+	*   @opt function callback
+	*   @opt number timeout  			ms until request failes with 'timeout' error. Defaults to this.0 == infinite
+	*   @opt array flags                Array of strings. Only used if $responseCallback is NOT passed
+	*                                    'resolveWithPayload'  Resolves with the entire payload instead of just the data. still rejects with error
+	*                                    'cacheResponse'      If passed the response will be cached (a pending cache will be created in the meanwhile)
 	*
-	* NOTE: If $responseCallback isn't passed, only a single response is accepted, else responses will keep being accepted
+	* NOTE: If payload.callback isn't set, only a single response is accepted, else responses will keep being accepted
 	*		 until you call this.cancelRequest() with the id (see @return vv) or $responseCallback itself 
-	* NOTE2:The 3rd arg passed to $responseCallback is the entire received uniSoc-formated object. It IS NOT available
-	*		 in the resolved promise if you omit @resopnseCallback
+	* NOTE2:payload.callback is called with (err,data,entire response payload)
 	*
 	* @return array [ 			Returns an array with the 4 following items:
 	*		number 					The id of the request (passed on to preparePayload() by request())
 	*		,Promise 				The promise to be returned by request(). Rejects if sending fails. If $responseCallback is
 	*								  passed it resolves when sending succeedes with id (used to unregister request). Else  it 
 	*								  resolves/rejects with the response from the other side of the socket.
-	*		,callback(err) 			Callback to be used on send error
-	*		,callback 				Callback to be used on send success (only if $responseCallback was passed in)
+	*		,function(data)			Callback to be used on send success (only if $responseCallback was passed in)
+	*		,function(err) 			Callback to be used on send error
 	*	] 	
 	*
 	* @call(<uniSoc_Client>)
 	*/
-	function prepareRequest(responseCallback,timeout,resolveWithPayload){
-
-		// Start by generating an id used to identify the response when it comes
-		var id=Math.floor(Math.random()*1000000000)+1; //+1 we we don't get 0 
-		// console.log(this);
-		while(typeof this.sentRequests[id]!=='undefined'){
-			id+=1;
-		}
-		var logStr=`Built request (${id}), response via `;
-
+	function prepareRequest(request){
+	    var self=this
+	    	,id=request.id
+			,logStr=`Built request (${id}), response via `
+			,_error=this.log.makeError('').setMark(id)
+				//If an error occurs we'll want to know where the request came from, so while we're still in the same call 
+				//stack we create the error for future use.
+		;
+		
 
 	    //For logging purposes in web, we want to avoid anon functions....
-	    var self=this;
-		let failsend=`Failed to send request ${id}.`;
-		if(typeof responseCallback=='function'){
+		if(request.callback){
 			logStr+='callback'
-			var {resolve:onSendSuccess,reject:onSendError,promise:sendPromise}=cX.exposedPromise();
+
+			var {  resolve:   onSendSuccess
+				   ,reject:   onSendError
+				   ,promise:  sendPromise
+			}=cX.exposedPromise();
 			
 			//Logging has already been done by send, just change what's returned on success and make
 			//sure to unregister on failed send
 			sendPromise=sendPromise.then(
-				()=>id
+				()=>{this.history.sent.push(id); return id;}
 				,function failedToSendRequest(err){
 					self.cancelRequest(id);
-					return self.log.makeError(failsend,err).setCode('ESEND').reject();
+					return _error.append('Failed to send request').setBubble(err).somewhere(request).updateTimestamp().reject('ESEND');
 				}
 			);
 
@@ -1320,71 +1644,89 @@ module.exports=function export_uniSoc_common(dep={}){
 			timeout=(typeof timeout=='number'?timeout:this.options.defaultTimeout);
 			if(timeout){
 				logStr+=`, active for ${timeout} ms`			
-				setTimeout(()=>{
-					if(this.sentRequests[id]){
-						this.log.debug(`Request ${id} timed out after ${timeout} ms.`);
-						this.cancelRequest(id);
+				setTimeout(function responseTimeout(){
+					if(self.sentRequests[id]){
+						self.log.makeEntry('debug',`Request timed out after ${timeout} ms.`).setMark(id).exec();
+						self.cancelRequest(id);
 					}
 				},timeout)
 			}
 
-		} else {
+		//If a callback wasn't passed we create one here, but this implies we can only accept a single response
+		}else{
 			logStr+='promise'
-			var {reject:requestFailed,promise:responsePromise,callback}=cX.exposedPromise(timeout);
-			 //^NOTE: unlike if a callback was passed in, here a $timeout will cause the returned promise to reject...
+			var timeout=request.timeout;
+			if(timeout){logStr+=`, timeout in ${timeout} ms`}
 
-			if(timeout){
-				logStr+=`, timeout in ${timeout} ms`
+
+			var exposed=cX.exposedPromise(timeout);
+			  //^NOTE: unlike if a callback was passed in, here a $timeout will cause the returned promise to reject...
+
+			//We want to handle everything the same (whether sending fails or an error is returned over the link), so
+			//we make sure the promise resolves with what looks like a response in all cases...
+			var sent=false;
+			var onSendSuccess=()=>{sent=true; this.history.sent.push(id)}; 
+			var onSendError=(error)=>exposed.resolve(Object.assign({},request,{data:null,error}))
+			var onResponse=(error,data,response)=>exposed.resolve(response);
+
+			//If we're caching the response, store a pending cache until the response arrives
+			if(request.flags.includes('cacheResponse')){
+				var resolvePending=storePendingResponse.call(this,request);
 			}
-
-			//If we want the promise to resolve with the entire payload...
-			if(resolveWithPayload){
-				responseCallback=function resolveWithPayload(err,data,payload){callback.call(this,err,payload)}; //this => whatever receiveResponse() uses... 
-			}else{
-				responseCallback=callback;
-			}
-
-			//Since we don't want responsePromise to be resolved, we don't use the method returned by 
-			//exposedPromise() and instead create one here... that we also use to log
-			var sent=false
-			var onSendSuccess=()=>{sent=true;}; 
-
-			//Since @responseCallback wasn't passed in, we will only listen for the first response,so whatever
-			//that response is (or if there is a problem with sending), unregister the request
-			responsePromise=cX.promiseAlways(responsePromise,()=>{
+			
+			//Now create the promise that will be returned to the user
+			var responsePromise=exposed.promise.then(function responseAlways(response){
+				//Start by canceling the request since we're not waiting for anything else
 				self.cancelRequest(id);
-			});
 
-
-			//Since the promise returned can fail both as a result of sending-failure AND an error response, we 
-			//want to add a note to the BLE so it's clear where the error comes from
-			responsePromise=responsePromise.catch(function requestFailed(err){
-				err=self.log.makeError(err);
-				if(sent){
-					if(err.msg=='timeout'){
-						err.msg=`Request (${id}) timed out after ${timeout} ms.`
-						err.setCode('ETIME');
-
-						//NOTE: the request has already been canceled by ^, so if it comes from now on a warning will be logged
+				//Handle errors...
+				if(response.error){
+					if(sent){
+						if(response.error=='timeout'){
+							response.error=_error.append(`Request timed out after ${timeout} ms.`).setCode('ETIME').somewhere(request).updateTimestamp();
+						}else if(BetterLog.isJsonBLE(response.error)){
+							response.error=self.log.makeError(response.error).setMark(id).addHandling(`This error originated at the other end of the socket`);
+						}else{
+							//This implies the error is a custom value from the other side of the socket, so we leave it as it!
+						}
 					}else{
-						err.addHandling(`This is an error-response to request ${id}`);
+						response.error=_error.append('Failed to send request').setBubble(response.error).somewhere(request).updateTimestamp().setCode('ESEND');
 					}
-				}else{
-					err=self.log.makeError(failsend,err).setCode('ESEND');
 				}
-				return err.reject();
+				
+				//If we created a pending response ^ we need to resolve it, but not before this resolves
+				if(resolvePending){
+					setTimeout(function resolvePendingResponse(){resolvePending(response);},1)
+				}
+
+				//What is actually returned to the external caller is determined in this.request()
+				return response;
 			})
 		}
 
 
-		this.log.makeEntry('trace',logStr).addHandling("next step is preparing payload...").exec();
-		this.sentRequests[id]=responseCallback; //this callback gets called by receiveResponse with (err,data,payload)
-		return [id,sendPromise||responsePromise,onSendSuccess,onSendError||requestFailed];
+		this.log.makeEntry('trace',logStr).setMark(id).addHandling("next step is preparing payload...").exec();
+		this.sentRequests[id]=this.markMethod(id,request.callback||onResponse); //this callback gets called by receiveResponse with (err,data,response)
+		return [sendPromise||responsePromise, onSendSuccess, onSendError];
 	}
+
+
+	
+
+
+
+
+
+
+
+
+
 
 
 
 	/*
+	* @param number|function idOrCallback 	The id of a request, or the custom callback passed in when making it
+	*
 	* @no_throw
 	* @return boolean 	True if a request was canceled, else false
 	*/
@@ -1399,10 +1741,10 @@ module.exports=function export_uniSoc_common(dep={}){
 				}else
 					this.log.warn("No pending request with id: ",idOrCallback);
 			}else{
-				var id=this.sentRequests.indexOf(idOrCallback);
-				if(id>-1){
-					delete this.sentRequests[id];
-					if(this.sentRequests.indexOf(idOrCallback)>-1)
+				var ids=Object.values(this.sentRequests).filter(callback=>callback==idOrCallback);
+				if(ids.length){
+					delete this.sentRequests[ids.shift()];
+					if(ids.length)
 						this.log.note("More than one instance of callback registered, only deleted first.",idOrCallback)
 					return true;
 				}else
@@ -1420,28 +1762,37 @@ module.exports=function export_uniSoc_common(dep={}){
 	/*
 	* Handler for responses received for a request (ie. used on original initiator's side to dispatch
 	* the response to the caller)
+	*
+	* @param object payload 	NOTE: This is the "response payload", not the "request payload"
 	*/
 	function receiveResponse(payload){
-		if(typeof this.sentRequests[payload.id]!='function'){
+		if(!this.sentRequests[payload.id]){
 			throw new Error(`Received response to non-existent request ${payload.id}`);
 		}
 
-		var msg=`response to ${payload.target}${getFrom(payload)}`
+		var msg=`response to '${payload.target}'${getFrom(payload)}`
 		if(payload.error==null){
 
-			this.log.debug(`${payload.id}: Received successfull ${msg}:`, payload.data);
+			this.log.debug(`Received successfull ${msg}:`, payload.data);
 
 			//If we've registered a middleware... ProTid: This is eg. where we may initiate a received smarty...
 			if(typeof this.onresponse=='function'){
 				this.onresponse.call(this,payload);
 			}
 			
-		}else if(payload.error=='501 Endpoint Not Implemented'){
-			let on=getFrom(payload).replace('from','on')||'.';
-			payload.error=this.log.makeEntry('warn',`${payload.id}: The endpoint '${payload.target}' doesn't exist${on}`).exec();	
-		}else{
-			// console.log('FAILED RESPONSE:',payload.error);
-			this.log.note(`${payload.id}: Received failed ${msg}:`,this.log.makeError(payload.error).toString());
+		}else{ 
+
+			if(payload.error=='501 Endpoint Not Implemented'){
+				//First create an error to return with the payload...
+				let on=getFrom(payload).replace('from','on')||'.';
+				payload.error=this.log.makeError(`The endpoint '${payload.target}' doesn't exist${on}`).setCode(501);	
+
+				//...and because we're logging something here for all responses we log the msg for this as well
+				this.log.note(payload.error.msg);
+			}else{
+				this.log.note(`Received failed ${msg}.`,payload);
+			}
+
 		}
 
 		//Now call the response callback which was created by prepareRequest() or passed into request()
@@ -1482,11 +1833,11 @@ module.exports=function export_uniSoc_common(dep={}){
 	* @return Promise(boolean,n/a) 	Always resolves after sending has been attempted with success boolean
 	*
 	* @bind(receiving socket, received payload)
+	* @marked
 	*/
-	async function sendResponse(request,error,data){
-		var success=true;
+	function sendResponse(request,error,data){
 		try{
-			this.log.makeTrace(arguments).prepend(`${request.id}: `).exec();
+			this.log.makeTrace(arguments).exec();
 			//Use the received object, but replace stuff with the new information we got. This way, 
 			//stuff like eg. 'address' and 'port' which dgram includes, gets passed back to send() 
 			//function and can be used if needed.
@@ -1505,20 +1856,35 @@ module.exports=function export_uniSoc_common(dep={}){
 				delete this.receivedRequests[request.id]
 			}
 
-			await this.send(request);
+			//Sned the response, always returning a resolved promise with a success boolean, since this is a best effort kind of thing
+			var self=this;
+			return this.send(request)
+				.then(
+					()=>true
+					,function sendResponse_catch(err){
+						self.log.mark(request.id).error(`Failed to respond to request ${request.id}`,err);
+						return false;
+					}
+				)
+				.then(function sendResponse_always(successBool){ //ALWAYS
+					
+					//If we want to take any actions when we're no longer _working
+					try{
+						if(!self.receivedRequests.length)
+							self.emit('_waiting');
+					}catch(err){
+						self.log.error("BUGBUG:",err)
+					}
+
+					return successBool;
+				})
+			;
+
 		}catch(err){
-			this.log.error(`Failed to respond to request ${request.id}`,err);
-			success=false
-		}
-		//If we want to take any actions when we're no longer _working
-		try{
-			if(!this.receivedRequests.length)
-				this.emit('_waiting');
-		}catch(err){
-			this.log.error("BUGBUG:",err)
+			this.log.error('BUGBUG',err);
+			return Promise.resolve(false);
 		}
 
-		return success; //Always return resolved promise, since this is a best effort kind of thing
 	}
 
 
@@ -1536,98 +1902,96 @@ module.exports=function export_uniSoc_common(dep={}){
 	uniSoc_Client.prototype.receive=function(payload){
 		try{
 			cX.checkProps(payload,{subject:'string'}); //sanity check that we passed the right thing
-			// console.log('THIS IN receive:',this)
-			// if(this.rinfo && payload.rinfo)
-			// 	this.log.highlight('red','rinfo in both socket and payload',this.rinfo,payload.rinfo)
-			// else if(this.rinfo)
-			// 	this.log.highlight('blue','we have rinfo on socket',this.rinfo)
-			// else if(payload.rinfo)
-			// 	this.log.highlight('blue','we have rinfo on payload',payload.rinfo)
-			// else
-			// 	this.log.highlight('magenta','no rinfo ANYWHERE');
-			
 
-			//Check if this message is a response, or a new message wanting a response, or a new message
-			//wanting nothing (like a multicast or the like...)
+			//All payloads should have id's
 			payload.id=Number(payload.id)||0
-			var id='';
-			if(!payload.id){
-				this.log.debug("Received message (no response expected):",payload);
 
-			}else{
-				this.history.received.push(payload.id);
-
-				if(payload.subject=='__uniSoc_response'){
-					receiveResponse.call(this,payload);
-					return;
-
-				}else{
-					id=payload.id+': ';
-					this.log.debug(`${id}Received request:`,payload); 
-
-					//Bind the response callback, and wrap it so it can only be called once!
-					var callback=cX.once(
-						sendResponse.bind(this,payload)
-						,()=>this.log.makeEntry('warn','sendResponse() called multiple times! This time')
-							.changeWhere(1).addFrom().exec()
-					);
-
-					//For simplicity require incoming messages to have unique id's so that logging and everything
-					//matches everywhere. If duplicates arrive the sender will just have to send again. Technically 
-					//we don't need the id's for anything beyond logging, so we could skip this rule, but what the hell, 
-					//clashes should be so very far inbetween that we may as well not bother...
-					if(this.receivedRequests.hasOwnProperty(payload.id)){
-						callback("__uniSoc_EALREADY");
-						return;
-
-					}else{
-						//If we want to take any actions when we're no longer _waiting
-						if(!this.receivedRequests.length){
-							this.emit('_working');
-						}
-
-						//In case we need to cancel the request early b/c eg. a shutdown... The callback is removed
-						//from within itself once called...
-						this.receivedRequests[payload.id]=callback;
-					}
-				} 
-			}
-
-
-			//Now either call an endpoint or a listener
-			var ep=this.getEndpoint(payload.subject)
-			if(ep){
-				//Endpoints are 'special' listeners, limited to 1 per subject and registered with custom options via 
-				//registerEndpoint()
-				ep.execute(this,payload,callback); //callback will be undefined if not a request
-				
-			}else{
-				var l=this.countListeners(payload.subject,true)//true=>any listener, even onUnhandled() and onAll()
-					,what=`for '${payload.subject}' ${callback?'with':'without'} callback`
-				;
-
-				if(l){
-					this.log.info((l>0? `${id}Calling ${l} listeners ${what}`:`${id}Calling ${-1*l} onAll/onUnhandled listeners ${what}`))
-
-					//Regulare listeners get called with:
-					this.emitEvent(payload.subject,[payload.data,callback,payload.payload]);
-				}else{
-					let logstr=`${id}New ${callback?'request':'message'} on subject '${payload.subject}' received, but no handler registered.`;
-					if(callback){
-						this.log.warn(`${logstr} Will respond with '501 Endpoint Not Implemented' to request:`,payload);
-						callback('501 Endpoint Not Implemented',null); //null, else we get a warning that data is still set...
-					}else{
-						this.log.warn(`${logstr} Since no response is expected this will just be ignored. Payload:`,payload);
-					}
-				}
-			}
-
-			return;
+			return this.markMethod(payload.id,_receive).call(this,payload);
 
 		}catch(err){
 			// console.error(err,payload);
-			this.log.makeError(err).addHandling('Error while handling incoming message:',payload).exec();
+			this.log.makeError(err).addHandling('BUGBUG while handling incoming message:',payload).exec();
 		}
+	}
+	function _receive(payload){
+		//Check if this message is a response, or a new message wanting a response, or a new message
+		//wanting nothing (like a multicast or the like...)
+		if(!payload.id){
+			this.log.debug("Received message (no response expected):",payload);
+
+		}else{
+			this.history.received.push(payload.id);
+
+			if(payload.subject=='__uniSoc_response'){
+				receiveResponse.call(this,payload);
+				return;
+
+			}else{
+				this.log.info(`Received request:`,payload); 
+
+				//Bind the response callback, and wrap it so it can only be called once!
+				var callback=cX.once(
+					this.markMethod(payload.id,sendResponse).bind(this,payload)
+					,()=>this.log.makeEntry('warn','sendResponse() called multiple times! This time')
+						.changeWhere(1).addFrom().exec()
+				);
+
+				//For simplicity require incoming messages to have unique id's so that logging and everything
+				//matches everywhere. If duplicates arrive the sender will just have to send again. Technically 
+				//we don't need the id's for anything beyond logging, so we could skip this rule, but what the hell, 
+				//clashes should be so very far inbetween that we may as well not bother...
+				if(this.receivedRequests.hasOwnProperty(payload.id)){
+					callback("__uniSoc_EALREADY");
+					return;
+
+				}else{
+					//If we want to take any actions when we're no longer _waiting
+					if(!this.receivedRequests.length){
+						this.emit('_working');
+					}
+
+					//In case we need to cancel the request early b/c eg. a shutdown... The callback is removed
+					//from within itself once called...
+					this.receivedRequests[payload.id]=callback;
+				}
+			} 
+		}
+
+
+		//Now either call an endpoint or a listener
+		var ep=this.getEndpoint(payload.subject)
+		if(ep){
+			//Endpoints are 'special' listeners, limited to 1 per subject and registered with custom options via registerEndpoint()
+			ep.execute(this,payload,callback); //callback will be undefined if not a request
+			
+		}else{
+			if(this.hasAnyListeners(payload.subject)){
+				let a=`Calling`
+					,b=`listener(s) for '${payload.subject}'. ${callback?'Passing':'Not passing'} along response callback.`
+				    ,l=this.getListeners(payload.subject).length
+				;
+				if(l)
+					this.log.debug(`${a} ${l} ${b}`)
+				else
+					this.log.debug(`${a} the 'onUnhandled' ${b}`)
+
+
+				//Regulare listeners get called with:
+				this.emit(payload.subject,payload.data,callback,payload.payload);
+			}else{
+				let warnStr=`New ${callback?'request':'message'} on subject '${payload.subject}' received, but no handler registered.`;
+				if(callback){
+					this.log.warn(`${warnStr} Will respond with '501 Endpoint Not Implemented' to request:`,payload);
+					callback('501 Endpoint Not Implemented',null); //null, else we get a warning that data is still set...
+				}else{
+					this.log.warn(`${warnStr} Since no response is expected this will just be ignored. Payload:`,payload);
+				}
+			}
+		}
+
+		return;
+
+		
 	}
 
 
@@ -1725,11 +2089,14 @@ module.exports=function export_uniSoc_common(dep={}){
 
 		//Then we intercept all events on the emitter...
 		if(typeof emitter._betterEvents=='object'){
-			//FUTURE NOTE: Since BetterEvents uses a loader we can't do instanceof because emitter may have loaded it itself
-			//...which is easier if the emitter is of our custom class
-			//(use .onAll so events aren't treated as 'handled' just because they're exteneded)
+			  //DevNote: Since BetterEvents uses a loader we can't do instanceof^ because emitter may have loaded it itself
+
 			emitter.onAll(extendEventOverUniSoc);
-			this.on('_disconnect',()=>emitter.removeListeners(extendEventOverUniSoc))
+			 //^use .onAll so events aren't treated as 'handled' just because they're exteneded
+
+			this.on('_disconnect',()=>emitter.removeListeners(extendEventOverUniSoc)) 
+			  //^since the func is unique it will only remove the single instance
+
 			return extendEventOverUniSoc;
 		}else{
 			this.log.note("Intercepting all calls to .emit() on:",emitter)
@@ -1750,8 +2117,6 @@ module.exports=function export_uniSoc_common(dep={}){
 					delete emitter.emit
 				}
 			});
-
-			return;
 		}
 
 	}

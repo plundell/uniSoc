@@ -24,7 +24,8 @@ module.exports=function uniSoc_web_exporter(dep){
 
 
 	uniSoc_web.defaultOptions={
-		reconnectTimeout:5000
+		reconnectInterval:5000
+		,reconnectAttempts:0 //infinite
 	};
 
 	
@@ -33,6 +34,8 @@ module.exports=function uniSoc_web_exporter(dep){
 
 		//Call the common constructor as 'this', which sets a few things on this incl log
 		uniSoc.Websocket.call(this,Object.assign({},uniSoc_web.defaultOptions,options));
+
+		this.reconnectAttempt=0;
 
 		var onconnect=()=>this.log.info('CONNECTED'); //define seperately so name in log is non <anonymous>
 		this.on('_connect',onconnect);
@@ -85,44 +88,29 @@ module.exports=function uniSoc_web_exporter(dep){
 			this.once('_connect',resolve);
 			this.once('_disconnect',reject);
 
-			//Finally return said promise
 			var stack=new Error().stack; //for debug purposes on fail vv
+
+			//Finally return said promise
 			return promise.then(
-				()=>{
+				success=>{
+					//Reset...
+					this.reconnectAttempt=0;
+
 					//remove listener since future disconnects aren't related to connection failure...
 					this.off('_disconnect',reject); 
 					//...and instead add a listener that will attempt to reconnect on future disconnects
-					this.once('_disconnect',()=>this.reconnect());
-					return;
+					this.once('_disconnect',()=>this.triggerReconnect());
+					return true;
 				}
-				,(err)=>{
+				,error=>{
 					this.off('_connect',resolve);
 					
 					//NOTE: Failed connections will be printed to the console regardless. So there is more data to
 					// 		find there that cannot be included in the log
 
-					let ble=this.log.makeError(err,this.socket).setStack(stack);
+					let ble=this.log.makeError(error,this.socket).setStack(stack);
 					this.socket=null;
-
-					//If this is a failed reconnect...
-					if(isReconnect){
-						ble.prepend(`Reconnect failed.`);
-						//The 1006 error (unexpected close) will be emitted if a server is unavailable, and it 
-						//will be printed to console regardless... so if that's the case just add an entry
-						//to the log without printing anything
-						if(ble.code==1006){
-							ble.changeLvl('debug').printed=true
-							ble.exec();
-						}else{
-							//Else it's something special and we print it full on
-							ble.exec();
-						}
-
-						//Then just trigger another attempt.... but DON'T reject
-						this.reconnect();
-					}else{
-						return ble.reject();
-					}
+					return ble.reject();
 				}
 			)
 			
@@ -138,24 +126,47 @@ module.exports=function uniSoc_web_exporter(dep){
 
 	/*
 	* Trigger a reconnect (and keep fireing at an interval, which is either passed in or
-	* this.options.reconnectTimeout)
+	* this.options.reconnectInterval)
 	*
 	* @opt number interval 	The new interval between attempts to use. If reconnect has previously
 	*						 been disabled then a positive number is needed to trigger anything. The
 	*						 value passed in will also be saved for future use
 	* @return void
 	*/
-	uniSoc_web.prototype.reconnect=function(interval){
-		if(interval && typeof interval=='number')
-			this.options.reconnectTimeout=interval;
+	uniSoc_web.prototype.triggerReconnect=function(){
+		//If one has already been triggered, exit...
+		if(this.reconnectTimeout)
+			return;
 
-		interval=this.options.reconnectTimeout;
+		if(this.options.reconnectInterval){
+			this.log.trace(`Will try to reconnect in ${this.options.reconnectInterval} ms.`);
+			
+			this.reconnectTimeout=setTimeout(()=>{
+				this.connect(null,'reconnect').catch(ble=>{
+					if(++this.reconnectAttempt>=this.options.reconnectAttempts){
+						ble.prepend("Last reconnect attempt failed, stopping...");
+						this.stopReconnecting();
+					}else{
+						ble.prepend(`Reconnect failed.`);
+						//The 1006 error (unexpected close) will be emitted if a server is unavailable, and it 
+						//will be printed to console regardless... so if that's the case just add an entry
+						//to the log without printing anything
+						if(ble.code==1006){
+							ble.changeLvl('debug').printed=true
+							ble.exec();
+						}else{
+							//Else it's something special and we print it full on
+							ble.exec();
+						}
+						//Delete timeout so it doesn't block, then trigger
+						delete this.reconnectTimeout;
+						this.triggerReconnect();
+					}
+				})
 
-		if(interval){
-			this.log.trace(`Trying to reconnect in ${interval} ms.`)
-			setTimeout(()=>this.connect(null,'reconnect'),interval)
+			},this.options.reconnectInterval);
 		}else{
-			this.log.note("Not reconnecting. See this.options.reconnectTimeout");
+			this.log.note("Not reconnecting. See this.options.reconnectInterval");
 		}
 	}
 
@@ -164,10 +175,33 @@ module.exports=function uniSoc_web_exporter(dep){
 	* @return void
 	*/
 	uniSoc_web.prototype.abortReconnect=function(){
-		this.options.reconnectTimeout=null;
+		if(this.reconnectTimeout){
+			clearTimeout(this.reconnectTimeout);
+			delete this.reconnectTimeout;
+		}
+		return;
 	}
 
 
+	uniSoc_web.prototype.startReconnecting=function(interval){
+		//Replace the existing interval if one was passed in
+		if(interval && typeof interval=='number')
+			this.options.reconnectInterval=interval;
+
+		//else make sure we have one
+		else if(typeof this.options.reconnectInterval!='number')
+			this.options.reconnectInterval=uniSoc_web.defaultOptions.reconnectInterval
+
+		//Remove any pending attempts and trigger a new one
+		this.abortReconnect();
+		this.triggerReconnect();
+	}
+
+
+	uniSoc_web.prototype.stopReconnecting=function(){
+		this.abortReconnect();
+		this.reconnectTimeout='block';
+	}
 
 	return uniSoc_web;
 }
