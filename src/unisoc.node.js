@@ -1147,7 +1147,7 @@ module.exports=function export_uniSoc_node(dep={}){
 		server.on('request',clientConnectionHandler.bind(this,server));
 		
 		server.listen(options,()=>{
-			this.log.info('net server listening on '+JSON.stringify(server.address()));
+			this.log.info('native <net> server listening on '+JSON.stringify(server.address()));
 			var info=getAddress(server)
 			info.type='net';
 			this.underlying.set(server,info)

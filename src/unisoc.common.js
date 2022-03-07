@@ -142,7 +142,7 @@ module.exports=function export_uniSoc_common(dep={}){
 		Object.defineProperty(this,'log',{value:new BetterLog(this,options)})
 		
 		//Inherit from BetterEvents and set failed emits to log to our log
-		BetterEvents.call(this,{onerror:this.log.error});
+		BetterEvents.call(this);
 
 
 		/*
@@ -164,72 +164,9 @@ module.exports=function export_uniSoc_common(dep={}){
 		* @prop function onerror 	Will be .call(this,payload) if we're about to transmit an error. Called after 
 		*							payload.data and payload.error have been awaited, but before this.beforetransmit
 		*/
-		if(typeof this.options.transmitErrors=='function'){
-			this.onerror=this.options.transmitErrors;
-		}else{
-			function passDefaultError(payload){
-				//If the error hasn't already been printed, do so now...
-				payload.error=this.log.makeError(payload.error);
-				let handling=`Sending '${this.options.defaultError}' ìn response to request ${payload.id} instead of`;
-				if(payload.error.printed)
-					this.log.trace(handling+" error #"+payload.error.id);
-				else
-					payload.error.addHandling(handling+" this error.").exec();
-				
-				//...then send the default error
-				payload.error=this.options.defaultError;
-			}
-			var first=true;
-			switch(String(this.options.transmitErrors).toLowerCase()){
-				case 'tostring':
-				case 'string':
-					this.onerror=function stringifyErrors(payload){
-						if(payload.error instanceof Error){
-							if(first){
-								first=false;
-								this.log.makeEntry('warn',"Remember, we are transmitting stringified errors...").setOptions({printStackLvl:0}).exec();
-							}
+		Object.defineProperty(this,'onerror',{enumerable:true,value:getErrorHandlerFunction.call(this)});
+			
 
-							//If this error hasn't already been printed, do so now...
-							if(!payload.error.isBLE||!payload.error.printed)
-								this.log.makeError(payload.error).addHandling(`Sending this error as string in response to request ${payload.id}`).exec();
-						}
-						//...then send a string
-						payload.error=payload.error.toString()
-					};
-					break;
-
-				case 'onlyprimitive':
-				case 'ifprimitive':
-					this.onerror=function passPrimitiveErrors(payload){
-						//Let primitives pass through, but anything else...
-						if(!cX.isPrimitive(payload.error))
-							passDefaultError.call(this,payload)
-					}
-					break;
-				case 'none':
-				case false:
-				case 'default':
-					this.onerror=passDefaultError;
-					break;
-				case true:
-				case 'all':
-					this.onerror=function transmitFullErrors(payload){
-						//payload.error has already been set to the error, and payload.data==null, but since regular errors don't always seem to be transmitted
-						//we make sure it's a BLE
-						if(payload.error instanceof Error && !payload.error.isBLE)
-							payload.error=this.log.makeError(payload.error);
-
-						if(first){
-							first=false;
-							this.log.makeEntry('warn',"Remember, we are transmitting full errors...").setOptions({printStackLvl:0}).exec();
-						}
-					}
-					break;
-				default:
-					this.log.makeError("Invalid value for option 'transmitErrors': ",this.options.transmitErrors).setCode('EINVAL').exec().throw();
-			}
-		}
 
 
 		/*
@@ -250,15 +187,99 @@ module.exports=function export_uniSoc_common(dep={}){
 
 
 		//Register a single endpoint allowing opposite side to querey our endpoints
-		this.registerEndpoint('help',()=>Object.entries(this.listVisibleEndpoints())
-			.map(([name,{argStr,description}])=>`${name}(${argStr})${description ? ' '+description:''}`).join('\n')
-		);
+		this.registerEndpoint('help',this.getHelpString);
 
 		this.log.trace(`Common constructor ran to end with:`,this);
 		
 	}
 	uniSoc.prototype=Object.create(BetterEvents.prototype); 
 	Object.defineProperty(uniSoc.prototype, 'constructor', {value: uniSoc}); 
+
+
+
+	/**
+	* Get a valid error handler function. Called from constructor. 
+	*
+	* @return function
+	* @callas <uniSoc>
+	*/
+	function getErrorHandlerFunction(){
+
+		if(typeof this.options.transmitErrors=='function'){
+			return this.options.transmitErrors;
+		}else{
+			var passDefaultError=(payload)=>{
+				//If the error hasn't already been printed, do so now...
+				payload.error=this.log.makeError(payload.error);
+				let handling=`Sending '${this.options.defaultError}' ìn response to request ${payload.id} instead of`;
+				if(payload.error.printed)
+					this.log.trace(handling+" error #"+payload.error.id);
+				else
+					payload.error.addHandling(handling+" this error.").exec();
+				
+				//...then send the default error
+				payload.error=this.options.defaultError;
+			}
+			var first=true;
+			let transmitErrors=String(this.options.transmitErrors).toLowerCase();
+			switch(transmitErrors){
+				case 'tostring':
+				case 'string':
+					var stringifyErrors=(payload)=>{
+						if(payload.error instanceof Error){
+							if(first){
+								first=false;
+								this.log.makeEntry('warn',"Remember, we are transmitting stringified errors...").setOptions({printStackLvl:0}).exec();
+							}
+
+							//If this error hasn't already been printed, do so now...
+							if(!payload.error.isBLE||!payload.error.printed)
+								this.log.makeError(payload.error).addHandling(`Sending this error as string in response to request ${payload.id}`).exec();
+						}
+						//...then send a string
+						payload.error=payload.error.toString()
+					};
+					return stringifyErrors;
+
+				case 'onlyprimitive':
+				case 'ifprimitive':
+					var passPrimitiveErrors=(payload)=>{
+						//Let primitives pass through, but anything else...
+						if(!cX.isPrimitive(payload.error))
+							passDefaultError.call(this,payload)
+					}
+					return passPrimitiveErrors;
+
+				case 'none':
+				case false:
+				case 'default':
+					return passDefaultError;
+					
+				case true:
+				case 'all':
+					var transmitFullErrors=(payload)=>{
+						//payload.error has already been set to the error, and payload.data==null, but since regular errors don't always seem to be transmitted
+						//we make sure it's a BLE
+						if(payload.error instanceof Error && !payload.error.isBLE)
+							payload.error=this.log.makeError(payload.error);
+
+						if(first){
+							first=false;
+							this.log.makeEntry('warn',"Remember, we are transmitting full errors...").setOptions({printStackLvl:0}).exec();
+						}
+					}
+					return transmitFullErrors;
+					
+				default:
+					this.log.makeError(`Invalid value for option 'transmitErrors': ${this.options.transmitErrors}`).setCode('EINVAL').exec().throw();
+			}
+		}
+	}
+
+
+
+
+
 
 
 	/*
@@ -301,6 +322,8 @@ module.exports=function export_uniSoc_common(dep={}){
 			}
 		}
 	}
+
+
 
 
 
@@ -785,6 +808,7 @@ module.exports=function export_uniSoc_common(dep={}){
 
 	/*
 	* Get all visible endpoints for this object. Used to display help
+	*
 	* @return object 	Keys are endpoint subjects, values are objects with 
 	*/
 	uniSoc.prototype.listVisibleEndpoints=function(){
@@ -804,7 +828,14 @@ module.exports=function export_uniSoc_common(dep={}){
 	}
 
 
-	
+	/*
+	* Get a list of the endpoints registered on this instance. Based on this.listVisibleEndpoints()
+	*
+	* @return string
+	*/
+	uniSoc.prototype.getHelpString=function(){
+		return Object.entries(this.listVisibleEndpoints()).map(([name,{argStr,description}])=>`${name}(${argStr})${description ? '\t'+description:''}`).sort().join('\n');
+	}
 
 
 
@@ -1562,7 +1593,8 @@ module.exports=function export_uniSoc_common(dep={}){
 					}
 
 
-					this.log.makeEntry('debug','Payload ready:',payload).appendStack(stack).addHandling("next step is transmitting...").exec();
+					this.log.makeEntry('debug','Payload ready:',payload).setOptions({extraLength:200}).appendStack(stack)
+						.addHandling("next step is transmitting...").exec();
 					return payload;
 				}catch(err){
 					throw this.log.makeError('Failed to prepare payload',err).appendStack(stack);
@@ -1986,6 +2018,8 @@ module.exports=function export_uniSoc_common(dep={}){
 				}else{
 					this.log.warn(`${warnStr} Since no response is expected this will just be ignored. Payload:`,payload);
 				}
+				//And if we're debugging we may wish to know what endpoints there are...
+				this.log.makeEntry('trace','Available endpoints:\n','\t'+this.getHelpString().replaceAll('\n','\n\t')).setOptions({extraLength:10000}).exec();
 			}
 		}
 
@@ -2061,23 +2095,23 @@ module.exports=function export_uniSoc_common(dep={}){
 		//^ 2020-03-02: how would that work? when sockets are dead they're dead, any "reconnect" would be  a new socket
 
 		//And finally if we're going to send all events under one subject, or prefix each event
-		var extendEventOverUniSoc;
+		var extendEventOverUniSoc,self=this;
 		if(prefix){
 			logStr+=' using prefix '
-			extendEventOverUniSoc=((evt,...data)=>{
+			extendEventOverUniSoc=(evt,...data)=>{
 				// if(evt=='shutdown') console.log('------------------INTERCEPT SHUTDOWN')
-				if(!this.connected) return;
+				if(!self.connected) return;
 				if(!filter(evt)) return;
-				return transmit.call(this,{subject:`${prefix}/${evt}`,data});
-			}).bind(this);
+				return transmit.call(self,{subject:`${prefix}/${evt}`,data});
+			};
 		}else if(subject){
 			logStr+=' using single subject '
-			extendEventOverUniSoc=((...data)=>{
+			extendEventOverUniSoc=(...data)=>{
 				// if(data[0]=='shutdown') console.log('------------------INTERCEPT SHUTDOWN')
-				if(!this.connected){return;}
+				if(!self.connected){return;}
 				if(!filter(data[0])){return;}
-				return transmit.call(this,{subject,data});
-			}).bind(this);
+				return transmit.call(self,{subject,data});
+			};
 		}else{
 			log.throw("Arg #2 must contain either 'prefix' or 'subject' option")
 		}
